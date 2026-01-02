@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
@@ -142,7 +142,7 @@ app.get('/events', (req: Request, res: Response) => {
     res.end();
   });
 });
-app.get("/test-call", async (_req, res) => {
+app.get("/test-call", async (_req: Request, res: Response) => {
   try {
     const to = process.env.TEST_CALL_TO;
     const from = process.env.TWILIO_PHONE_NUMBER;
@@ -316,7 +316,7 @@ async function startServer() {
 // Start the server
 startServer();
 
-app.get("/test-db", async (_req, res) => {
+app.get("/test-db", async (_req: Request, res: Response) => {
   try {
     // Upsert a test user
     const user = await prisma.user.upsert({
@@ -347,7 +347,7 @@ app.get("/test-db", async (_req, res) => {
 });
 
 // Diagnostic endpoint to check campaigns table
-app.get("/diagnostic/campaigns", async (_req, res) => {
+app.get("/diagnostic/campaigns", async (_req: Request, res: Response) => {
   try {
     console.log("[DIAGNOSTIC] /diagnostic/campaigns - Checking database...");
     const campaignCount = await prisma.campaign.count();
@@ -376,7 +376,7 @@ app.get("/diagnostic/campaigns", async (_req, res) => {
   }
 });
 
-app.get("/test-seed", async (_req, res) => {
+app.get("/test-seed", async (_req: Request, res: Response) => {
   try {
     // 1) Ensure a test user exists (same as /test-db)
     const user = await prisma.user.upsert({
@@ -445,9 +445,13 @@ app.get("/test-seed", async (_req, res) => {
     });
   }
 });
-app.get("/call/start/:campaignContactId", async (req, res) => {
+app.get("/call/start/:campaignContactId", async (req: Request, res: Response) => {
   try {
     const { campaignContactId } = req.params;
+    
+    if (!campaignContactId) {
+      return res.status(400).json({ ok: false, error: "campaignContactId is required" });
+    }
 
     const campaignContact = await prisma.campaignContact.findUnique({
       where: { id: campaignContactId },
@@ -683,7 +687,7 @@ app.get("/call/start/:campaignContactId", async (req, res) => {
     });
   }
 });
-app.post("/twilio/status", async (req, res) => {
+app.post("/twilio/status", async (req: Request, res: Response) => {
   try {
     const { CallSid, CallStatus, CallDuration } = req.body as {
       CallSid?: string;
@@ -785,7 +789,7 @@ app.post("/twilio/status", async (req, res) => {
   }
 });
 
-app.post("/debug/score", async (req, res) => {
+app.post("/debug/score", async (req: Request, res: Response) => {
   try {
     const { transcript, durationSeconds } = req.body as {
       transcript?: string;
@@ -817,7 +821,7 @@ app.post("/debug/score", async (req, res) => {
     });
   }
 });
-app.post("/debug/apply-score", async (req, res) => {
+app.post("/debug/apply-score", async (req: Request, res: Response) => {
   try {
     const { callLogId, transcript, durationSeconds } = req.body as {
       callLogId?: string;
@@ -1788,7 +1792,7 @@ app.post("/debug/apply-score", async (req, res) => {
   }
 });
 // GET /campaigns
-app.get("/campaigns", async (req, res) => {
+app.get("/campaigns", async (req: Request, res: Response) => {
   try {
     console.log("[DIAGNOSTIC] GET /campaigns - Starting database query...");
     const campaigns = await prisma.campaign.findMany({
@@ -1850,7 +1854,7 @@ app.get("/campaigns", async (req, res) => {
 });
 
 // POST /campaigns/transcribe-audio - Transcribe audio file
-app.post("/campaigns/transcribe-audio", upload.single('audio'), async (req, res) => {
+app.post("/campaigns/transcribe-audio", upload.single('audio'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -1883,7 +1887,7 @@ app.post("/campaigns/transcribe-audio", upload.single('audio'), async (req, res)
 });
 
 // POST /campaigns/generate-knowledge - Generate structured knowledge from transcript
-app.post("/campaigns/generate-knowledge", async (req, res) => {
+app.post("/campaigns/generate-knowledge", async (req: Request, res: Response) => {
   try {
     const { transcript } = req.body as {
       transcript: string;
@@ -1945,7 +1949,7 @@ app.post("/campaigns/generate-knowledge", async (req, res) => {
 });
 
 // POST /campaigns - Create new campaign
-app.post("/campaigns", async (req, res) => {
+app.post("/campaigns", async (req: Request, res: Response) => {
   try {
     const { 
       name, 
@@ -2225,9 +2229,14 @@ app.post("/campaigns", async (req, res) => {
 });
 
 // Batch Call Orchestrator endpoint
-app.post("/batch/start/:campaignId", async (req, res) => {
+app.post("/batch/start/:campaignId", async (req: Request, res: Response) => {
   try {
     const { campaignId } = req.params;
+    
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+    
     const {
       cooldownHours = 24,
       maxRetries = 2,
@@ -2279,7 +2288,7 @@ app.post("/batch/start/:campaignId", async (req, res) => {
     for (const contact of allContacts) {
       // Check NOT_PICK retry count
       if (contact.status === 'NOT_PICK') {
-        const notPickCount = contact.calls.filter(c => c.resultStatus === 'NOT_PICK').length;
+        const notPickCount = contact.calls.filter((c: { resultStatus: LeadStatus | null }) => c.resultStatus === 'NOT_PICK').length;
         if (notPickCount >= maxRetries) {
           continue; // Skip - max retries reached
         }
@@ -2348,9 +2357,13 @@ app.post("/batch/start/:campaignId", async (req, res) => {
 });
 
 // Pause batch job endpoint
-app.post("/batch/pause/:batchJobId", async (req, res) => {
+app.post("/batch/pause/:batchJobId", async (req: Request, res: Response) => {
   try {
     const { batchJobId } = req.params;
+    
+    if (!batchJobId) {
+      return res.status(400).json({ ok: false, error: "batchJobId is required" });
+    }
 
     // Check if batch job exists
     const batchJob = await prisma.batchCallJob.findUnique({
@@ -2372,11 +2385,11 @@ app.post("/batch/pause/:batchJobId", async (req, res) => {
     }
 
     // Pause the batch
-    pauseBatchJob(batchJobId);
+    pauseBatchJob(batchJobId as string);
 
     // Update database
     const updated = await prisma.batchCallJob.update({
-      where: { id: batchJobId },
+      where: { id: batchJobId as string },
       data: {
         status: 'PAUSED',
         pausedAt: new Date(),
@@ -2418,9 +2431,13 @@ app.post("/batch/pause/:batchJobId", async (req, res) => {
 });
 
 // Resume batch job endpoint
-app.post("/batch/resume/:batchJobId", async (req, res) => {
+app.post("/batch/resume/:batchJobId", async (req: Request, res: Response) => {
   try {
     const { batchJobId } = req.params;
+    
+    if (!batchJobId) {
+      return res.status(400).json({ ok: false, error: "batchJobId is required" });
+    }
 
     // Check if batch job exists
     const batchJob = await prisma.batchCallJob.findUnique({
@@ -2442,7 +2459,7 @@ app.post("/batch/resume/:batchJobId", async (req, res) => {
     }
 
     // Get resume data
-    const resumeData = await resumeBatchJob(batchJobId);
+    const resumeData = await resumeBatchJob(batchJobId as string);
     if (!resumeData) {
       return res.status(400).json({
         ok: false,
@@ -2452,7 +2469,7 @@ app.post("/batch/resume/:batchJobId", async (req, res) => {
 
     // Update database
     const updated = await prisma.batchCallJob.update({
-      where: { id: batchJobId },
+      where: { id: batchJobId as string },
       data: {
         status: 'RUNNING',
         pausedAt: null,
@@ -2512,9 +2529,14 @@ app.post("/batch/resume/:batchJobId", async (req, res) => {
 });
 
 // Stop batch job endpoint (human override)
-app.post("/batch/stop/:batchJobId", async (req, res) => {
+app.post("/batch/stop/:batchJobId", async (req: Request, res: Response) => {
   try {
     const { batchJobId } = req.params;
+    
+    if (!batchJobId) {
+      return res.status(400).json({ ok: false, error: "batchJobId is required" });
+    }
+    
     const { cancelledBy } = req.body as { cancelledBy?: string };
 
     // Check if batch job exists
@@ -2537,12 +2559,12 @@ app.post("/batch/stop/:batchJobId", async (req, res) => {
     }
 
     // Stop the batch
-    stopBatchJob(batchJobId, cancelledBy);
+    stopBatchJob(batchJobId as string, cancelledBy);
 
     res.json({
       ok: true,
       message: "Batch job stopped",
-      batchJobId,
+      batchJobId: batchJobId as string,
     });
   } catch (err: any) {
     console.error("Batch stop error:", err);
@@ -2556,9 +2578,13 @@ app.post("/batch/stop/:batchJobId", async (req, res) => {
 
 // POST /leads/:campaignContactId/convert
 // Mark a lead as converted and record learning pattern
-app.post("/leads/:campaignContactId/convert", async (req, res) => {
+app.post("/leads/:campaignContactId/convert", async (req: Request, res: Response) => {
   try {
     const { campaignContactId } = req.params;
+    
+    if (!campaignContactId) {
+      return res.status(400).json({ ok: false, error: "campaignContactId is required" });
+    }
 
     // Get campaign contact with related data
     const campaignContact = await prisma.campaignContact.findUnique({
@@ -2613,7 +2639,7 @@ app.post("/leads/:campaignContactId/convert", async (req, res) => {
     res.json({
       ok: true,
       message: "Lead marked as converted",
-      campaignContactId,
+      campaignContactId: campaignContactId as string,
       convertedAt: updated.convertedAt,
     });
   } catch (err: any) {
@@ -2628,9 +2654,13 @@ app.post("/leads/:campaignContactId/convert", async (req, res) => {
 
 // GET /learning/patterns/:campaignId
 // Get top performing patterns for a campaign
-app.get("/learning/patterns/:campaignId", async (req, res) => {
+app.get("/learning/patterns/:campaignId", async (req: Request, res: Response) => {
   try {
     const { campaignId } = req.params;
+    
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
 
     // Validate campaign exists
     const campaign = await prisma.campaign.findUnique({
@@ -2645,11 +2675,11 @@ app.get("/learning/patterns/:campaignId", async (req, res) => {
     }
 
     // Get top patterns
-    const patterns = await getTopPatterns(campaignId);
+    const patterns = await getTopPatterns(campaignId as string);
 
     res.json({
       ok: true,
-      campaignId,
+      campaignId: campaignId as string,
       patterns,
       count: patterns.length,
     });
@@ -2664,11 +2694,16 @@ app.get("/learning/patterns/:campaignId", async (req, res) => {
 });
 
 // GET /campaigns/:id/contacts
-app.get("/campaigns/:id/contacts", async (req, res) => {
+app.get("/campaigns/:id/contacts", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ ok: false, error: "id is required" });
+    }
+    
     const contacts = await prisma.campaignContact.findMany({
-      where: { campaignId: id },
+      where: { campaignId: id as string },
       include: { contact: true },
       orderBy: { lastCallAt: "desc" },
     });
@@ -2680,7 +2715,7 @@ app.get("/campaigns/:id/contacts", async (req, res) => {
 });
 
 // POST /call/live/transcript - STEP 23: Receive transcript chunk for live monitoring
-app.post("/call/live/transcript", async (req, res) => {
+app.post("/call/live/transcript", async (req: Request, res: Response) => {
   try {
     const { callLogId, transcriptChunk, campaignContactId, campaignId, contactId } = req.body as {
       callLogId?: string;
@@ -2728,7 +2763,7 @@ app.post("/call/live/transcript", async (req, res) => {
 });
 
 // POST /call/live/emergency/stop - STEP 23: Emergency stop call
-app.post("/call/live/emergency/stop", async (req, res) => {
+app.post("/call/live/emergency/stop", async (req: Request, res: Response) => {
   try {
     const { callLogId } = req.body as { callLogId?: string };
 
@@ -2804,7 +2839,7 @@ app.post("/call/live/emergency/stop", async (req, res) => {
 });
 
 // POST /call/live/emergency/handoff - STEP 23: Force human handoff
-app.post("/call/live/emergency/handoff", async (req, res) => {
+app.post("/call/live/emergency/handoff", async (req: Request, res: Response) => {
   try {
     const { callLogId } = req.body as { callLogId?: string };
 
@@ -2870,11 +2905,15 @@ app.post("/call/live/emergency/handoff", async (req, res) => {
 });
 
 // GET /call/live/status/:callLogId - STEP 23: Get live call status
-app.get("/call/live/status/:callLogId", async (req, res) => {
+app.get("/call/live/status/:callLogId", async (req: Request, res: Response) => {
   try {
     const { callLogId } = req.params;
+    
+    if (!callLogId) {
+      return res.status(400).json({ ok: false, error: "callLogId is required" });
+    }
 
-    const callState = getLiveCallState(callLogId);
+    const callState = getLiveCallState(callLogId as string);
 
     if (!callState) {
       return res.status(404).json({
@@ -2907,9 +2946,13 @@ app.get("/call/live/status/:callLogId", async (req, res) => {
 });
 
 // GET /call/:callLogId/review - STEP 24: Get call self-review
-app.get("/call/:callLogId/review", async (req, res) => {
+app.get("/call/:callLogId/review", async (req: Request, res: Response) => {
   try {
     const { callLogId } = req.params;
+    
+    if (!callLogId) {
+      return res.status(400).json({ ok: false, error: "callLogId is required" });
+    }
 
     const callLog = await prisma.callLog.findUnique({
       where: { id: callLogId },
@@ -2956,9 +2999,13 @@ app.get("/call/:callLogId/review", async (req, res) => {
 });
 
 // GET /call/preview/:campaignContactId - STEP 22: Pre-Call Simulation Preview
-app.get("/call/preview/:campaignContactId", async (req, res) => {
+app.get("/call/preview/:campaignContactId", async (req: Request, res: Response) => {
   try {
     const { campaignContactId } = req.params;
+    
+    if (!campaignContactId) {
+      return res.status(400).json({ ok: false, error: "campaignContactId is required" });
+    }
 
     const campaignContact = await prisma.campaignContact.findUnique({
       where: { id: campaignContactId },
@@ -3082,11 +3129,16 @@ app.get("/call/preview/:campaignContactId", async (req, res) => {
 });
 
 // GET /campaign-contact/:id/script-mode - Get ScriptMode for a campaign contact (STEP 20)
-app.get("/campaign-contact/:id/script-mode", async (req, res) => {
+app.get("/campaign-contact/:id/script-mode", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ ok: false, error: "id is required" });
+    }
+    
     const campaignContact = await prisma.campaignContact.findUnique({
-      where: { id },
+      where: { id: id as string },
       include: { campaign: true },
     });
 
@@ -3095,7 +3147,7 @@ app.get("/campaign-contact/:id/script-mode", async (req, res) => {
     }
 
     const scriptMode = getScriptModeFromLeadStatus(campaignContact.status);
-    const campaign = campaignContact.campaign as any;
+    const campaign = (campaignContact as { campaign: any }).campaign;
     const callerIdentity = (campaign?.callerIdentityMode === 'PERSONALIZED') ? 'PERSONALIZED' : 'GENERIC';
     const callerName = campaign?.callerDisplayName || undefined;
     const preferredLanguage = campaignContact.preferredLanguage as "en" | "hi" | "hinglish" | undefined || "en";
@@ -3127,13 +3179,17 @@ app.get("/campaign-contact/:id/script-mode", async (req, res) => {
 });
 
 // GET /analytics/overview/:campaignId
-app.get("/analytics/overview/:campaignId", async (req, res) => {
+app.get("/analytics/overview/:campaignId", async (req: Request, res: Response) => {
   try {
     const { campaignId } = req.params;
+    
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
 
     // Get campaign contacts
     const contacts = await prisma.campaignContact.findMany({
-      where: { campaignId },
+      where: { campaignId: campaignId as string },
       include: {
         calls: {
           select: {
@@ -3147,7 +3203,7 @@ app.get("/analytics/overview/:campaignId", async (req, res) => {
     });
 
     // Calculate KPIs
-    const totalCalls = contacts.reduce((sum, cc) => sum + cc.calls.length, 0);
+    const totalCalls = contacts.reduce((sum: number, cc) => sum + cc.calls.length, 0);
     const hotLeads = contacts.filter((cc) => cc.status === "HOT").length;
     const convertedLeads = contacts.filter((cc) => (cc as any).isConverted === true).length;
     const conversionRate = contacts.length > 0 ? (convertedLeads / contacts.length) * 100 : 0;
@@ -3155,12 +3211,12 @@ app.get("/analytics/overview/:campaignId", async (req, res) => {
     // Calculate average call duration
     const allDurations = contacts.flatMap((cc) =>
       cc.calls
-        .map((call) => call.durationSeconds)
+        .map((call: { durationSeconds: number | null }) => call.durationSeconds)
         .filter((d): d is number => d !== null && d !== undefined)
     );
     const avgCallDuration =
       allDurations.length > 0
-        ? Math.round(allDurations.reduce((sum, d) => sum + d, 0) / allDurations.length)
+        ? Math.round(allDurations.reduce((sum: number, d: number) => sum + d, 0) / allDurations.length)
         : 0;
 
     // Funnel data
@@ -3252,9 +3308,14 @@ function setHumanOverride(overrideData: any): any {
 
 // Human Override endpoint - Allow sales agents to override AI decisions
 // Supports comprehensive override actions for real-time control
-app.post("/leads/:campaignContactId/override", async (req, res) => {
+app.post("/leads/:campaignContactId/override", async (req: Request, res: Response) => {
   try {
     const { campaignContactId } = req.params;
+    
+    if (!campaignContactId) {
+      return res.status(400).json({ ok: false, error: "campaignContactId is required" });
+    }
+    
     const {
       // AI strategy overrides
       scriptMode,
@@ -3505,7 +3566,7 @@ app.post("/leads/:campaignContactId/override", async (req, res) => {
 });
 
 // POST /leads/upload-csv/:campaignId - Bulk CSV lead upload
-app.post("/leads/upload-csv/:campaignId", upload.single('csv'), async (req, res) => {
+app.post("/leads/upload-csv/:campaignId", upload.single('csv'), async (req: Request, res: Response) => {
   console.log('[CSV UPLOAD] Request received');
   try {
     const { campaignId } = req.params;
@@ -3749,7 +3810,7 @@ app.post("/leads/upload-csv/:campaignId", upload.single('csv'), async (req, res)
 });
 
 // POST /leads/create - Manual lead entry
-app.post("/leads/create", async (req, res) => {
+app.post("/leads/create", async (req: Request, res: Response) => {
   try {
     const { campaignId, name, phone, source = "MANUAL" } = req.body as {
       campaignId: string;
@@ -3799,7 +3860,7 @@ app.post("/leads/create", async (req, res) => {
       include: {
         campaigns: {
           where: {
-            campaignId: campaignId,
+            campaignId: campaignId as string,
           },
         },
       },
@@ -3866,7 +3927,7 @@ app.post("/leads/create", async (req, res) => {
     // Store retry metadata in extraContext (using type assertion for backward compatibility)
     const campaignContact = await prisma.campaignContact.create({
       data: {
-        campaignId: campaignId,
+        campaignId: campaignId as string,
         contactId: contact.id,
         status: 'NOT_PICK',
         // Initialize retry metadata in extraContext
@@ -3917,9 +3978,13 @@ app.post("/leads/create", async (req, res) => {
 });
 
 // Remove human override endpoint
-app.delete("/leads/:campaignContactId/override", async (req, res) => {
+app.delete("/leads/:campaignContactId/override", async (req: Request, res: Response) => {
   try {
     const { campaignContactId } = req.params;
+    
+    if (!campaignContactId) {
+      return res.status(400).json({ ok: false, error: "campaignContactId is required" });
+    }
 
     const campaignContact = await prisma.campaignContact.findUnique({
       where: { id: campaignContactId },
@@ -3971,9 +4036,13 @@ app.delete("/leads/:campaignContactId/override", async (req, res) => {
 });
 
 // Mark lead as converted and capture successful patterns for AI learning
-app.post("/leads/:campaignContactId/convert", async (req, res) => {
+app.post("/leads/:campaignContactId/convert", async (req: Request, res: Response) => {
   try {
     const { campaignContactId } = req.params;
+    
+    if (!campaignContactId) {
+      return res.status(400).json({ ok: false, error: "campaignContactId is required" });
+    }
     
     // Find the campaign contact
     const campaignContact = await prisma.campaignContact.findUnique({
@@ -4015,8 +4084,8 @@ app.post("/leads/:campaignContactId/convert", async (req, res) => {
     
     // Extract patterns from all calls in the conversion journey
     const patternId = await captureSuccessfulPatterns(
-      campaignContactId,
-      campaignContact.calls.map((call) => ({
+      campaignContactId as string,
+      campaignContact.calls.map((call: { id: string; transcript: string | null; durationSeconds: number | null; resultStatus: LeadStatus | null }) => ({
         id: call.id,
         transcript: call.transcript,
         durationSeconds: call.durationSeconds,
