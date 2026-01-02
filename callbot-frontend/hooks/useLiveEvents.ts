@@ -25,7 +25,7 @@ export interface SSEEvent {
     // Call context data (for CALL_CONTEXT_UPDATED event)
     emotion?: 'calm' | 'excited' | 'frustrated' | 'hesitant' | 'anxious'; // 'anxious' is mapped from 'hesitant' in backend
     urgencyLevel?: 'low' | 'medium' | 'high';
-    scriptMode?: 'INTRO' | 'DISCOVERY' | 'QUALIFICATION' | 'CLOSING' | 'FOLLOW_UP' | 'DISCOVERY' | 'OBJECTION' | 'PITCH' | 'OBJECTION_HANDLING'; // STEP 20: Updated to include new ScriptMode enum values
+    scriptMode?: 'INTRO' | 'DISCOVERY' | 'QUALIFICATION' | 'CLOSING' | 'FOLLOW_UP' | 'OBJECTION' | 'PITCH' | 'OBJECTION_HANDLING'; // STEP 20: Updated to include new ScriptMode enum values
     openingLine?: string; // STEP 20: Generated opening line
     probingQuestions?: string[]; // STEP 20: Probing questions for the script mode
     // Voice strategy data (for VOICE_STRATEGY_UPDATED event)
@@ -66,10 +66,8 @@ export interface SSEEvent {
     // Campaign creation data (for CAMPAIGN_CREATED event)
     propertyId?: string | null;
     // STEP 21: Auto-applied strategy data (for STRATEGY_AUTO_APPLIED event)
-    source?: 'AUTO' | 'MANUAL';
-    reason?: string;
+    strategySource?: 'AUTO' | 'MANUAL';
     // STEP 23: Live call monitoring data
-    callLogId?: string;
     transcriptSummary?: string;
     objections?: string[];
     riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH';
@@ -160,7 +158,7 @@ export function useLiveEvents(options: UseLiveEventsOptions = {}) {
   const maxReconnectAttempts = 5;
   const baseReconnectDelay = 1000; // Start with 1 second
 
-  const connectRef = useRef<() => void>();
+  const connectRef = useRef<() => void | undefined>(undefined);
   
   const connect = useCallback(() => {
     // Clean up existing connection

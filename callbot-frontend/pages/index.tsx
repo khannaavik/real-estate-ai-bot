@@ -5,6 +5,7 @@ import { LeadStatusBadge, type LeadStatus } from "../components/LeadStatusBadge"
 import { LeadDrawer } from "../components/LeadDrawer";
 import { BatchControlBar } from "../components/BatchControlBar";
 import type { LeadTimelineEvent } from "../types/lead";
+import type { CampaignContact, Contact } from "@/types/campaign";
 
 
 type Campaign = { 
@@ -14,82 +15,6 @@ type Campaign = {
   totalLeads?: number;
   warmLeadsCount?: number;
   hotLeadsCount?: number;
-};
-
-type Contact = {
-  id: string;
-  name: string;
-  phone: string;
-  email?: string;
-};
-
-type CampaignContact = {
-  id: string;
-  campaignId: string;
-  contactId: string;
-  status: "NOT_PICK" | "COLD" | "WARM" | "HOT";
-  lastCallAt?: string | null;
-  contact?: Contact;
-  outcome?: {
-    score: number;
-    bucket: 'VERY_LOW' | 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH';
-    action: 'DROP' | 'NURTURE' | 'FOLLOW_UP' | 'HUMAN_HANDOFF';
-    followUp: 'CALL_2H' | 'CALL_24H' | 'CALL_48H' | 'WHATSAPP' | 'EMAIL' | 'NONE';
-    confidence: 'LOW' | 'MEDIUM' | 'HIGH';
-  };
-  context?: {
-    emotion: 'calm' | 'excited' | 'frustrated' | 'hesitant';
-    urgencyLevel: 'low' | 'medium' | 'high';
-    scriptMode: 'DISCOVERY' | 'OBJECTION' | 'CLOSING' | 'PITCH' | 'OBJECTION_HANDLING';
-  };
-  voiceStrategy?: {
-    voiceTone: 'soft' | 'neutral' | 'assertive' | 'empathetic';
-    speechRate: 'slow' | 'normal' | 'fast';
-    scriptVariant: 'DISCOVERY_SOFT' | 'DISCOVERY_DIRECT' | 'OBJECTION_CALM' | 'OBJECTION_EMPATHETIC' | 'CLOSING_CONFIDENT';
-    language: 'en' | 'hi' | 'hinglish';
-  };
-  adaptiveStep?: {
-    scriptMode: 'DISCOVERY' | 'PITCH' | 'OBJECTION_HANDLING' | 'CLOSING';
-    nextPromptInstruction: string;
-    slowDownSpeech: boolean;
-    interruptAllowed: boolean;
-    confidenceBoost: boolean;
-  };
-  learningStrategy?: {
-    recommendedScriptMode?: string;
-    recommendedVoiceTone?: string;
-    recommendedSpeechRate?: string;
-    basedOn: string;
-  };
-  humanOverride?: {
-    scriptMode?: string;
-    voiceTone?: string;
-    speechRate?: string;
-    followUpChannel?: string;
-    followUpAfterHours?: number;
-    overrideStrategy?: boolean; // STEP 21: Disable auto-strategy flag
-    overrideReason?: string;
-    overriddenBy?: string;
-    overriddenAt?: string;
-  };
-  autoAppliedStrategy?: { // STEP 21: Auto-applied strategy data
-    scriptVariant?: string;
-    voiceTone?: string;
-    emotion?: string;
-    urgencyLevel?: string;
-    source?: 'AUTO';
-    reason?: string;
-  };
-  liveCall?: { // STEP 23: Live call monitoring data
-    callLogId?: string;
-    transcriptSummary?: string;
-    emotion?: 'calm' | 'excited' | 'frustrated' | 'hesitant';
-    urgencyLevel?: 'low' | 'medium' | 'high';
-    objections?: string[];
-    riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH';
-    suggestions?: string[];
-    lastUpdateAt?: string;
-  };
 };
 
 async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 8000) {
@@ -424,7 +349,7 @@ export default function Home() {
                     context: {
                       emotion: mappedEmotion as 'calm' | 'excited' | 'frustrated' | 'hesitant',
                       urgencyLevel: event.data.urgencyLevel!,
-                      scriptMode: event.data.scriptMode || (cc.context?.scriptMode) || 'DISCOVERY',
+                      scriptMode: (event.data.scriptMode || (cc.context?.scriptMode) || 'DISCOVERY') as 'INTRO' | 'DISCOVERY' | 'QUALIFICATION' | 'CLOSING' | 'FOLLOW_UP' | 'OBJECTION' | 'PITCH' | 'OBJECTION_HANDLING',
                     },
                   }
                 : cc
@@ -440,7 +365,7 @@ export default function Home() {
                 context: {
                   emotion: mappedEmotion as 'calm' | 'excited' | 'frustrated' | 'hesitant',
                   urgencyLevel: event.data.urgencyLevel!,
-                  scriptMode: event.data.scriptMode || prev.context?.scriptMode || 'DISCOVERY',
+                  scriptMode: (event.data.scriptMode || prev.context?.scriptMode || 'DISCOVERY') as 'INTRO' | 'DISCOVERY' | 'QUALIFICATION' | 'CLOSING' | 'FOLLOW_UP' | 'OBJECTION' | 'PITCH' | 'OBJECTION_HANDLING',
                 },
               };
             });
@@ -598,7 +523,7 @@ export default function Home() {
 
       case 'STRATEGY_AUTO_APPLIED':
         // STEP 21: Update contact with auto-applied strategy
-        if (event.campaignContactId && event.data.source === 'AUTO') {
+        if (event.campaignContactId && event.data.strategySource === 'AUTO') {
           setContacts((prev) =>
             prev.map((cc) =>
               cc.id === event.campaignContactId
@@ -610,7 +535,7 @@ export default function Home() {
                       emotion: event.data.emotion,
                       urgencyLevel: event.data.urgencyLevel,
                       source: 'AUTO',
-                      reason: event.data.reason,
+                      reason: event.data.reason || undefined,
                     },
                   }
                 : cc
@@ -640,6 +565,8 @@ export default function Home() {
       case 'CALL_LIVE_UPDATE':
         // STEP 23: Update live call monitoring data
         if (event.campaignContactId && event.data.callLogId) {
+          // Map 'anxious' back to 'hesitant' for frontend display consistency
+          const mappedEmotion = event.data.emotion === 'anxious' ? 'hesitant' : (event.data.emotion as 'calm' | 'excited' | 'frustrated' | 'hesitant' | undefined);
           setContacts((prev) =>
             prev.map((cc) =>
               cc.id === event.campaignContactId
@@ -648,7 +575,7 @@ export default function Home() {
                     liveCall: {
                       callLogId: event.data.callLogId,
                       transcriptSummary: event.data.transcriptSummary,
-                      emotion: event.data.emotion,
+                      emotion: mappedEmotion,
                       urgencyLevel: event.data.urgencyLevel,
                       objections: event.data.objections,
                       riskLevel: event.data.riskLevel,
@@ -662,6 +589,8 @@ export default function Home() {
           
           // Also update selectedLead if it matches
           if (selectedLead && selectedLead.id === event.campaignContactId) {
+            // Map 'anxious' back to 'hesitant' for frontend display consistency
+            const mappedEmotionForLead = event.data.emotion === 'anxious' ? 'hesitant' : (event.data.emotion as 'calm' | 'excited' | 'frustrated' | 'hesitant' | undefined);
             setSelectedLead((prev) => {
               if (!prev) return prev;
               return {
@@ -669,7 +598,7 @@ export default function Home() {
                 liveCall: {
                   callLogId: event.data.callLogId,
                   transcriptSummary: event.data.transcriptSummary,
-                  emotion: event.data.emotion,
+                  emotion: mappedEmotionForLead,
                   urgencyLevel: event.data.urgencyLevel,
                   objections: event.data.objections,
                   riskLevel: event.data.riskLevel,
@@ -711,7 +640,7 @@ export default function Home() {
 
       case 'CALL_LIVE_SUGGESTION':
         // STEP 23: Handle whisper suggestions
-        if (event.campaignContactId && event.data.callLogId && event.data.suggestion) {
+        if (event.campaignContactId && event.data.callLogId && event.data.suggestions) {
           setContacts((prev) =>
             prev.map((cc) =>
               cc.id === event.campaignContactId && cc.liveCall
@@ -719,7 +648,7 @@ export default function Home() {
                     ...cc,
                     liveCall: {
                       ...cc.liveCall,
-                      suggestions: [...(cc.liveCall.suggestions || []), event.data.suggestion!],
+                      suggestions: event.data.suggestions || [],
                     },
                   }
                 : cc
@@ -757,12 +686,13 @@ export default function Home() {
       case 'CALL_SELF_REVIEW_READY':
         // STEP 24: Update contact with self-review data
         if (event.campaignContactId && event.data.selfReview && event.data.callLogId) {
+          const callLogId = event.data.callLogId; // Ensure it's defined
           setContacts((prev) =>
             prev.map((cc) => {
               if (cc.id === event.campaignContactId) {
                 // Update or add call to calls array
                 const existingCalls = cc.calls || [];
-                const callIndex = existingCalls.findIndex((c: any) => c.id === event.data.callLogId);
+                const callIndex = existingCalls.findIndex((c) => c.id === callLogId);
                 
                 if (callIndex >= 0) {
                   // Update existing call
@@ -779,7 +709,7 @@ export default function Home() {
                     calls: [
                       ...existingCalls,
                       {
-                        id: event.data.callLogId,
+                        id: callLogId,
                         aiSelfReview: event.data.selfReview,
                       },
                     ],
@@ -792,10 +722,11 @@ export default function Home() {
           
           // Also update selectedLead if it matches
           if (selectedLead && selectedLead.id === event.campaignContactId) {
+            const callLogId = event.data.callLogId; // Ensure it's defined
             setSelectedLead((prev) => {
               if (!prev) return prev;
               const existingCalls = prev.calls || [];
-              const callIndex = existingCalls.findIndex((c: any) => c.id === event.data.callLogId);
+              const callIndex = existingCalls.findIndex((c) => c.id === callLogId);
               
               if (callIndex >= 0) {
                 const updatedCalls = [...existingCalls];
@@ -810,7 +741,7 @@ export default function Home() {
                   calls: [
                     ...existingCalls,
                     {
-                      id: event.data.callLogId,
+                      id: callLogId,
                       aiSelfReview: event.data.selfReview,
                     },
                   ],
