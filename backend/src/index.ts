@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { prisma } from "./prisma";
+import { prisma, testDatabaseConnection } from "./prisma";
 import type { LeadStatus } from "@prisma/client";
 import { determineLeadStatusFromTranscript, extractConversationMemory, decideScriptMode, decideObjectionStrategy, type ScriptMode as LeadScoringScriptMode, type ObjectionStrategy } from "./leadScoring";
 import { detectEmotionAndUrgency, detectEmotionAndUrgencyWithContext } from "./emotionUrgencyDetection";
@@ -34,14 +34,27 @@ import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCall
 
 // Load environment variables
 dotenv.config();
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID!,
-  process.env.TWILIO_AUTH_TOKEN!
-);
 
+// Startup logging
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
+
+console.log('[STARTUP] Environment:', NODE_ENV);
+console.log('[STARTUP] PORT:', PORT, process.env.PORT ? '(from env)' : '(fallback to 4000)');
+
+// Lazy Twilio client initialization (only create when needed, not at module level)
+function getTwilioClient() {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  
+  if (!accountSid || !authToken) {
+    throw new Error('TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN not set');
+  }
+  
+  return twilio(accountSid, authToken);
+}
 
 const app = express();
-const PORT = process.env.PORT || 4000;
 
 // Configure multer for file uploads (memory storage for CSV)
 // Must be configured BEFORE bodyParser middleware
@@ -66,9 +79,34 @@ app.use(cors({
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// Health check route
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok' });
+// Health check route - must NOT depend on Twilio or OpenAI
+const serverStartTime = Date.now();
+app.get('/health', async (req: Request, res: Response) => {
+  try {
+    // Test database connection
+    let dbStatus = 'unknown';
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      dbStatus = 'connected';
+    } catch (error) {
+      dbStatus = 'disconnected';
+    }
+
+    const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
+    
+    res.status(200).json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: uptime,
+      database: dbStatus,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 });
 
 // SSE endpoint for real-time updates
@@ -117,6 +155,7 @@ app.get("/test-call", async (_req, res) => {
       });
     }
 
+    const twilioClient = getTwilioClient();
     const call = await twilioClient.calls.create({
       to,
       from,
@@ -249,10 +288,33 @@ app.get('/test-openai', async (req: Request, res: Response) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Start server with database connection check
+async function startServer() {
+  try {
+    // Test database connection before starting server
+    console.log('[STARTUP] Testing database connection...');
+    const dbConnected = await testDatabaseConnection();
+    
+    if (!dbConnected) {
+      console.error('[STARTUP] FATAL: Database connection failed. Exiting.');
+      process.exit(1);
+    }
+    
+    console.log('[STARTUP] Database connection successful');
+    console.log('[STARTUP] Starting Express server...');
+    
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`[STARTUP] ✓ Server is running on port ${PORT}`);
+      console.log(`[STARTUP] Environment: ${NODE_ENV}`);
+    });
+  } catch (error) {
+    console.error('[STARTUP] FATAL: Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Start the server
+startServer();
 
 app.get("/test-db", async (_req, res) => {
   try {
@@ -475,6 +537,7 @@ app.get("/call/start/:campaignContactId", async (req, res) => {
       return res.status(400).json({ ok: false, error: "TWILIO_PHONE_NUMBER not set" });
     }
 
+    const twilioClient = getTwilioClient();
     const call = await twilioClient.calls.create({
       to,
       from,
