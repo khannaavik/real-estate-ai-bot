@@ -1,0 +1,27 @@
+# Root ignores
+.env
+.env.*
+.cursor/
+.cursorignore
+.cursor-health.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Logs
+*.log
+
+# Node
+node_modules/
+dist/
+.next/
+out/
+
+# Prisma
+prisma/dev.db
+prisma/migrations/dev*
+
+# Build caches
+tsconfig.tsbuildinfo

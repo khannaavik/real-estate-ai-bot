@@ -1,0 +1,22 @@
+﻿@import "tailwindcss";
+
+/* Add custom styles below */
+@keyframes slideInRight {
+  from {
+    transform: translateX(1rem);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
