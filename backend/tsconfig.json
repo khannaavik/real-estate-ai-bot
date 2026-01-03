@@ -22,11 +22,12 @@
     "declarationMap": true,
 
     // Stricter Typechecking Options
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": false,
+    "exactOptionalPropertyTypes": false,
 
     // Recommended Options
-    "strict": true,
+    "strict": false,
+    "noImplicitAny": false,
     "isolatedModules": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true

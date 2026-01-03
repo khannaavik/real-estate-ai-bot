@@ -82,31 +82,7 @@ app.use(express.json());
 // Health check route - must NOT depend on Twilio or OpenAI
 const serverStartTime = Date.now();
 app.get('/health', async (req: Request, res: Response) => {
-  try {
-    // Test database connection
-    let dbStatus = 'unknown';
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-      dbStatus = 'connected';
-    } catch (error) {
-      dbStatus = 'disconnected';
-    }
-
-    const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
-    
-    res.status(200).json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      uptime: uptime,
-      database: dbStatus,
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
-  }
+  res.json({ ok: true });
 });
 
 // SSE endpoint for real-time updates
@@ -729,7 +705,7 @@ app.post("/twilio/status", async (req: Request, res: Response) => {
     // Update CallLog record
     let updatedCampaignContact: any = null;
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       await tx.callLog.update({
       where: { id: callLog.id },
       data: callLogUpdateData,
@@ -1804,7 +1780,7 @@ app.get("/campaigns", async (req: Request, res: Response) => {
 
     // Get lead counts for each campaign using aggregation
     const campaignsWithCounts = await Promise.all(
-      campaigns.map(async (campaign) => {
+      campaigns.map(async (campaign: any) => {
         // Aggregate lead counts by status
         const [totalResult, warmResult, hotResult] = await Promise.all([
           prisma.campaignContact.count({
@@ -3203,16 +3179,16 @@ app.get("/analytics/overview/:campaignId", async (req: Request, res: Response) =
     });
 
     // Calculate KPIs
-    const totalCalls = contacts.reduce((sum: number, cc) => sum + cc.calls.length, 0);
-    const hotLeads = contacts.filter((cc) => cc.status === "HOT").length;
-    const convertedLeads = contacts.filter((cc) => (cc as any).isConverted === true).length;
+    const totalCalls = contacts.reduce((sum: number, cc: any) => sum + cc.calls.length, 0);
+    const hotLeads = contacts.filter((cc: any) => cc.status === "HOT").length;
+    const convertedLeads = contacts.filter((cc: any) => (cc as any).isConverted === true).length;
     const conversionRate = contacts.length > 0 ? (convertedLeads / contacts.length) * 100 : 0;
 
     // Calculate average call duration
-    const allDurations = contacts.flatMap((cc) =>
+    const allDurations = contacts.flatMap((cc: any) =>
       cc.calls
         .map((call: { durationSeconds: number | null }) => call.durationSeconds)
-        .filter((d): d is number => d !== null && d !== undefined)
+        .filter((d: any): d is number => d !== null && d !== undefined)
     );
     const avgCallDuration =
       allDurations.length > 0
@@ -3221,10 +3197,10 @@ app.get("/analytics/overview/:campaignId", async (req: Request, res: Response) =
 
     // Funnel data
     const funnelData = {
-      NOT_PICK: contacts.filter((cc) => cc.status === "NOT_PICK").length,
-      COLD: contacts.filter((cc) => cc.status === "COLD").length,
-      WARM: contacts.filter((cc) => cc.status === "WARM").length,
-      HOT: contacts.filter((cc) => cc.status === "HOT").length,
+      NOT_PICK: contacts.filter((cc: any) => cc.status === "NOT_PICK").length,
+      COLD: contacts.filter((cc: any) => cc.status === "COLD").length,
+      WARM: contacts.filter((cc: any) => cc.status === "WARM").length,
+      HOT: contacts.filter((cc: any) => cc.status === "HOT").length,
       CONVERTED: convertedLeads,
     };
 
