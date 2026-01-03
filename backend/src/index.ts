@@ -268,16 +268,18 @@ app.get('/test-openai', async (req: Request, res: Response) => {
 // Start server with database connection check
 async function startServer() {
   try {
-    // Test database connection before starting server
+    // Test database connection before starting server (non-fatal)
     console.log('[STARTUP] Testing database connection...');
     const dbConnected = await testDatabaseConnection();
     
     if (!dbConnected) {
-      console.error('[STARTUP] FATAL: Database connection failed. Exiting.');
-      process.exit(1);
+      console.warn('[STARTUP] WARNING: Database connection failed. Server will start anyway.');
+      console.warn('[STARTUP] Database may be starting up or temporarily unavailable.');
+      console.warn('[STARTUP] The /health endpoint will report database status.');
+    } else {
+      console.log('[STARTUP] Database connection successful');
     }
     
-    console.log('[STARTUP] Database connection successful');
     console.log('[STARTUP] Starting Express server...');
     
     app.listen(PORT, '0.0.0.0', () => {
