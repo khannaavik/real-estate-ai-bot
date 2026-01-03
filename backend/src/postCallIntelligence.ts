@@ -1,7 +1,8 @@
 // backend/src/postCallIntelligence.ts
 // Generate structured post-call intelligence summaries
 
-import type { LeadStatus } from "@prisma/client";
+// Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
+type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 import type { ConversationMemory } from "./leadScoring";
 
 /**

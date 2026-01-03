@@ -1,5 +1,6 @@
 // backend/src/leadScoring.ts
-import type { LeadStatus } from "@prisma/client";
+// Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
+type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 
 export interface LeadScoringInput {
   transcript: string;

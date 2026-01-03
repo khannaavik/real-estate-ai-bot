@@ -1,7 +1,8 @@
 // backend/src/aiPromptBuilder.ts
 // Utility functions for building AI prompts with dynamic tone context
 
-import type { LeadStatus } from "@prisma/client";
+// Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
+type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 import { getAIToneContext, generateAIPromptWithTone, type ConversationMemory } from "./leadScoring";
 
 /**

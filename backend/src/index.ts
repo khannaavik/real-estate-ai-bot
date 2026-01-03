@@ -6,7 +6,8 @@ import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { prisma, testDatabaseConnection } from "./prisma";
-import type { LeadStatus } from "@prisma/client";
+// Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
+type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 import { determineLeadStatusFromTranscript, extractConversationMemory, decideScriptMode, decideObjectionStrategy, type ScriptMode as LeadScoringScriptMode, type ObjectionStrategy } from "./leadScoring";
 import { detectEmotionAndUrgency, detectEmotionAndUrgencyWithContext } from "./emotionUrgencyDetection";
 import { decideVoiceAndScript as decideVoiceAndScriptSimple } from "./voiceStrategyDecision";

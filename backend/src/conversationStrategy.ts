@@ -1,7 +1,8 @@
 // backend/src/conversationStrategy.ts
 // Conversation Strategy Engine - Rule-based script mode selection and opening lines
 
-import type { LeadStatus } from "@prisma/client";
+// Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
+type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 
 /**
  * Script mode enum for conversation strategy.
