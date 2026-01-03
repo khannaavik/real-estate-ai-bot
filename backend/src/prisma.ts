@@ -2,7 +2,20 @@
 import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 
-export const prisma = new PrismaClient();
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  console.error("[PRISMA] FATAL: DATABASE_URL is not set in environment variables");
+  process.exit(1);
+}
+
+export const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: connectionString,
+    },
+  },
+});
 
 // Test database connection on initialization
 export async function testDatabaseConnection(): Promise<boolean> {
