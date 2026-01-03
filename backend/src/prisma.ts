@@ -1,10 +1,12 @@
-// backend/src/prisma.ts
 import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 
-// Prisma 7 automatically reads DATABASE_URL from environment variables
-// No need to pass it explicitly to PrismaClient constructor
-export const prisma = new PrismaClient();
+// PrismaClient instantiated once without adapters, extensions, or super() calls
+const prisma = new PrismaClient({
+  log: process.env.NODE_ENV === "development"
+    ? ["query", "error", "warn"]
+    : ["error"],
+});
 
 // Test database connection on initialization
 export async function testDatabaseConnection(): Promise<boolean> {
@@ -16,3 +18,7 @@ export async function testDatabaseConnection(): Promise<boolean> {
     return false;
   }
 }
+
+// Export as default and named export for compatibility
+export default prisma;
+export { prisma };
