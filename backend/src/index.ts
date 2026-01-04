@@ -33,8 +33,11 @@ import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCall
 
 
 
-// Load environment variables
-dotenv.config();
+// Load environment variables (local development only)
+// Production (Railway) relies on process.env directly
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
 
 // Startup logging
 const NODE_ENV = process.env.NODE_ENV || 'development';

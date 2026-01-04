@@ -1,16 +1,8 @@
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+import { PrismaClient } from "@prisma/client";
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false, // REQUIRED for Supabase + Railway
-  },
-});
-
-const adapter = new PrismaPg(pool);
-
+if (!process.env.PRISMA_ACCELERATE_URL) {
+  throw new Error("PRISMA_ACCELERATE_URL is missing at runtime");
+}
 
 export const prisma = new PrismaClient({
   accelerateUrl: process.env.PRISMA_ACCELERATE_URL,

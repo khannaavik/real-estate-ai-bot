@@ -4,12 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "dotenvx run -- prisma generate && tsc",
-    "postinstall": "dotenvx run -- prisma generate",
+    "build": "prisma generate && tsc",
+    "postinstall": "prisma generate",
     "start": "node dist/index.js",
-    "dev": "ts-node-dev src/index.ts",
+    "dev": "dotenvx run -- ts-node-dev src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "prisma:studio": "dotenvx run -- npx prisma studio --config=./prisma/prisma.config.ts"
+    "prisma:studio": "dotenvx run -- npx prisma studio"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.2.0",
     "@prisma/client": "^7.1.0",
+    "@prisma/config": "^7.2.0",
     "@types/multer": "^2.0.0",
     "axios": "^1.13.2",
     "cors": "^2.8.5",
