@@ -4,16 +4,18 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "prisma generate && tsc",
-    "postinstall": "prisma generate",
+    "build": "dotenvx run -- prisma generate && tsc",
+    "postinstall": "dotenvx run -- prisma generate",
     "start": "node dist/index.js",
     "dev": "ts-node-dev src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prisma:studio": "dotenvx run -- npx prisma studio --config=./prisma/prisma.config.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@prisma/adapter-pg": "^7.2.0",
     "@prisma/client": "^7.1.0",
     "@types/multer": "^2.0.0",
     "axios": "^1.13.2",
@@ -28,6 +30,7 @@
     "twilio": "^5.10.7"
   },
   "devDependencies": {
+    "@dotenvx/dotenvx": "^1.51.4",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.2",

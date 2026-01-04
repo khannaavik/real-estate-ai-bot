@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { prisma, testDatabaseConnection } from "./prisma";
+import { prisma } from "./prisma";
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
 type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 import { determineLeadStatusFromTranscript, extractConversationMemory, decideScriptMode, decideObjectionStrategy, type ScriptMode as LeadScoringScriptMode, type ObjectionStrategy } from "./leadScoring";
@@ -268,18 +268,6 @@ app.get('/test-openai', async (req: Request, res: Response) => {
 // Start server with database connection check
 async function startServer() {
   try {
-    // Test database connection before starting server (non-fatal)
-    console.log('[STARTUP] Testing database connection...');
-    const dbConnected = await testDatabaseConnection();
-    
-    if (!dbConnected) {
-      console.warn('[STARTUP] WARNING: Database connection failed. Server will start anyway.');
-      console.warn('[STARTUP] Database may be starting up or temporarily unavailable.');
-      console.warn('[STARTUP] The /health endpoint will report database status.');
-    } else {
-      console.log('[STARTUP] Database connection successful');
-    }
-    
     console.log('[STARTUP] Starting Express server...');
     
     app.listen(PORT, '0.0.0.0', () => {

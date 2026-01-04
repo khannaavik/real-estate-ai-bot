@@ -1,24 +1,17 @@
-import "dotenv/config";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 
-// PrismaClient instantiated once without adapters, extensions, or super() calls
-const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === "development"
-    ? ["query", "error", "warn"]
-    : ["error"],
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false, // REQUIRED for Supabase + Railway
+  },
 });
 
-// Test database connection on initialization
-export async function testDatabaseConnection(): Promise<boolean> {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    return true;
-  } catch (error) {
-    console.error("[PRISMA] Database connection test failed:", error);
-    return false;
-  }
-}
+const adapter = new PrismaPg(pool);
 
-// Export as default and named export for compatibility
-export default prisma;
-export { prisma };
+
+export const prisma = new PrismaClient({
+  errorFormat: "minimal",
+});
