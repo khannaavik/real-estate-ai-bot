@@ -13,5 +13,5 @@ const adapter = new PrismaPg(pool);
 
 
 export const prisma = new PrismaClient({
-  errorFormat: "minimal",
+  accelerateUrl: process.env.PRISMA_ACCELERATE_URL,
 });
