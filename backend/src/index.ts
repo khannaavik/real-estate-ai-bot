@@ -71,8 +71,31 @@ const upload = multer({
 
 // Middleware - CORS configuration for multipart requests
 // Must be applied BEFORE routes
+const allowedOrigins = [
+  'https://real-estate-ai-bot-2424.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    // In production, require origin header for cross-origin requests
+    // Allow requests with no origin only in development (for testing)
+    if (!origin && process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    if (!origin) {
+      return callback(new Error('CORS: Origin header required'));
+    }
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
