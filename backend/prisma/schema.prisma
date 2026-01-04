@@ -7,17 +7,16 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
+  id        String     @id @default(cuid())
+  email     String     @unique
   name      String?
-  createdAt DateTime @default(now())
-
+  createdAt DateTime   @default(now())
   campaigns Campaign[]
   contacts  Contact[]
 }
 
 model Property {
-  id         String  @id @default(cuid())
+  id         String     @id @default(cuid())
   name       String
   location   String
   priceRange String?
@@ -26,197 +25,146 @@ model Property {
   reraId     String?
   usps       Json?
   links      Json?
-
-  campaigns Campaign[]
+  campaigns  Campaign[]
 }
 
 model Campaign {
-  id         String  @id @default(cuid())
-  name       String
-  userId     String
-  propertyId String?
-
-  // 👇 ADD THIS LINE
-  batchJobs BatchCallJob[]
-
-  // Personalized caller intro fields
-  callerIdentityMode String?  @default("GENERIC") // 'GENERIC' | 'PERSONALIZED'
-  callerDisplayName  String?
-
-  // Campaign knowledge base (structured property information)
-  campaignKnowledge Json?
-
-  // Voice input knowledge fields
-  voiceTranscript          String?  // Raw transcript from voice input
-  voiceTranscriptLanguage  String?  // Detected language: 'en' | 'hi' | 'hinglish'
-  voiceKnowledge           Json?    // Structured knowledge extracted from voice transcript
-  knowledgeUsageMode       String?  @default("INTERNAL_ONLY") // 'INTERNAL_ONLY' | 'PUBLIC'
-
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
-  user             User                     @relation(fields: [userId], references: [id])
-  property         Property?                @relation(fields: [propertyId], references: [id])
-  campaignContacts CampaignContact[]
-  outcomePatterns  OutcomeLearningPattern[]
+  id                      String                   @id @default(cuid())
+  name                    String
+  userId                  String
+  propertyId              String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  callerDisplayName       String?
+  callerIdentityMode      String?                  @default("GENERIC")
+  campaignKnowledge       Json?
+  knowledgeUsageMode      String?                  @default("INTERNAL_ONLY")
+  voiceKnowledge          Json?
+  voiceTranscript         String?
+  voiceTranscriptLanguage String?
+  batchJobs               BatchCallJob[]
+  property                Property?                @relation(fields: [propertyId], references: [id])
+  user                    User                     @relation(fields: [userId], references: [id])
+  campaignContacts        CampaignContact[]
+  outcomePatterns         OutcomeLearningPattern[]
 }
 
 model Contact {
-  id        String   @id @default(cuid())
+  id        String            @id @default(cuid())
   userId    String
   name      String
   phone     String
   email     String?
   tags      Json?
   source    String?
-  createdAt DateTime @default(now())
-
-  user      User              @relation(fields: [userId], references: [id])
+  createdAt DateTime          @default(now())
   campaigns CampaignContact[]
+  user      User              @relation(fields: [userId], references: [id])
 }
 
 model CampaignContact {
-  id         String     @id @default(cuid())
-  campaignId String
-  contactId  String
-  status     LeadStatus @default(NOT_PICK)
-  lastCallAt DateTime?
-
-  // Conversation memory fields for persistent lead tracking
-  lastQuestionsAsked String[] @default([]) // Questions asked by lead (price, location, carpet area, EMI, possession)
-  objections         String[] @default([]) // Objections raised (price, distance, timing, trust)
-  sentimentTrend     String[] @default([]) // Sentiment progression: "negative" | "neutral" | "positive"
-  preferredLanguage  String? // Detected preferred language from conversations
-
-  // AI-driven follow-up plan fields (decided automatically, ready for automation)
-  followUpAfterHours    Int? // Hours to wait before executing follow-up (null = no follow-up planned)
-  followUpChannel       String? // Follow-up channel: "call" | "whatsapp" | "email" (null = no follow-up planned)
-  followUpMessageIntent String? // Intent/guidance for follow-up message (what to communicate, not the exact message)
-  followUpPlannedAt     DateTime? // Calculated timestamp: lastCallAt + followUpAfterHours (for easy querying)
-
-  // Human handoff decision fields (decided automatically, ready for notification/assignment)
-  handoffRecommended Boolean @default(false) // Whether human handoff is recommended (true = handoff needed)
-  handoffReason      String? // Reason for handoff (e.g., "HOT_LEAD_COMPLEX_QUESTIONS", "MULTIPLE_OBJECTIONS", "STRONG_BUYING_INTENT")
-
-  // Conversion tracking for AI learning
-  convertedAt DateTime? // Timestamp when lead converted (manual flag for now)
-  isConverted Boolean   @default(false) // Whether this lead has converted (for easy querying)
-
-  // Human override and additional context storage
-  extraContext Json? // JSON field for storing human overrides and additional context
-
-  campaign         Campaign            @relation(fields: [campaignId], references: [id])
-  contact          Contact             @relation(fields: [contactId], references: [id])
-  calls            CallLog[]
-  learningPatterns AILearningPattern[] // Successful patterns captured from this lead
+  id                    String              @id @default(cuid())
+  campaignId            String
+  contactId             String
+  status                LeadStatus          @default(NOT_PICK)
+  lastCallAt            DateTime?
+  convertedAt           DateTime?
+  followUpAfterHours    Int?
+  followUpChannel       String?
+  followUpMessageIntent String?
+  followUpPlannedAt     DateTime?
+  handoffReason         String?
+  handoffRecommended    Boolean             @default(false)
+  isConverted           Boolean             @default(false)
+  lastQuestionsAsked    String[]            @default([])
+  objections            String[]            @default([])
+  preferredLanguage     String?
+  sentimentTrend        String[]            @default([])
+  extraContext          Json?
+  learningPatterns      AILearningPattern[]
+  calls                 CallLog[]
+  campaign              Campaign            @relation(fields: [campaignId], references: [id])
+  contact               Contact             @relation(fields: [contactId], references: [id])
 }
 
 model CallLog {
-  id                 String      @id @default(cuid())
-  campaignContactId  String
-  twilioCallSid      String? // <-- add this
-  startedAt          DateTime    @default(now())
-  endedAt            DateTime?
-  durationSeconds    Int?
-  transcript         String?
-  aiSummary          String?
-  aiExplicitInterest Boolean?
-  aiEngagementLevel  String?
-  aiNextStepBooked   Boolean?
-  resultStatus       LeadStatus?
-
-  // Post-call intelligence fields (structured summary for sales team)
-  postCallSummary          String[] @default([]) // Array of 3-5 bullet point summaries
-  postCallInterestLevel    String? // "high" | "medium" | "low" | "none"
-  postCallObjections       String[] @default([]) // Normalized list of objections from this call
-  postCallNextAction       String? // Recommended next action for sales team
-  postCallBestCallbackTime String? // Suggested callback time window
-
-  // Emotion and urgency detection fields
-  emotion       String? // Detected emotion: "calm" | "excited" | "anxious" | "frustrated" | "confused"
-  urgencyLevel  String? // Urgency level: "low" | "medium" | "high"
-  urgencyReason String? // Short explanation of urgency detection
-
-  // Adaptive script mode for AI caller
-  scriptMode String? // Script mode: "DISCOVERY" | "REASSURANCE" | "CLOSING" | "FAST_TRACK" | "COOL_DOWN"
-
-  // Objection-driven dynamic reply strategy
-  objectionStrategy String? // Objection strategy: "VALUE_REFRAME" | "SOCIAL_PROOF" | "CONTEXTUAL_COMPARE" | "SOFT_URGENCY" | "ASSISTIVE" | "SIMPLIFY"
-
-  // Call outcome prediction fields
-  outcomeProbability Int? // Probability score: 0-100
-  outcomeBucket      String? // Bucket: "VERY_LOW" | "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH"
-  outcomeAction      String? // Recommended action: "DROP" | "NURTURE" | "FOLLOW_UP" | "HUMAN_HANDOFF"
-  outcomeFollowUp    String? // Recommended follow-up: "CALL_2H" | "CALL_24H" | "CALL_48H" | "WHATSAPP" | "EMAIL" | "NONE"
-  outcomeConfidence  String? // Confidence level: "LOW" | "MEDIUM" | "HIGH"
-
-  // Voice modulation and script control fields
-  voiceTone     String? // Voice tone: "soft" | "neutral" | "assertive" | "empathetic"
-  speechRate    String? // Speech rate: "slow" | "normal" | "fast"
-  scriptVariant String? // Script variant: "DISCOVERY_SOFT" | "DISCOVERY_DIRECT" | "OBJECTION_CALM" | "OBJECTION_EMPATHETIC" | "CLOSING_CONFIDENT"
-  language      String? // Language: "en" | "hi" | "hinglish"
-
-  campaignContact  CampaignContact     @relation(fields: [campaignContactId], references: [id])
-  learningPatterns AILearningPattern[] // Learning patterns from this call
+  id                       String              @id @default(cuid())
+  campaignContactId        String
+  startedAt                DateTime            @default(now())
+  endedAt                  DateTime?
+  durationSeconds          Int?
+  transcript               String?
+  aiSummary                String?
+  aiExplicitInterest       Boolean?
+  aiEngagementLevel        String?
+  aiNextStepBooked         Boolean?
+  resultStatus             LeadStatus?
+  twilioCallSid            String?
+  postCallBestCallbackTime String?
+  postCallInterestLevel    String?
+  postCallNextAction       String?
+  postCallObjections       String[]            @default([])
+  postCallSummary          String[]            @default([])
+  emotion                  String?
+  urgencyLevel             String?
+  urgencyReason            String?
+  scriptMode               String?
+  objectionStrategy        String?
+  outcomeAction            String?
+  outcomeBucket            String?
+  outcomeConfidence        String?
+  outcomeFollowUp          String?
+  outcomeProbability       Int?
+  language                 String?
+  scriptVariant            String?
+  speechRate               String?
+  voiceTone                String?
+  learningPatterns         AILearningPattern[]
+  campaignContact          CampaignContact     @relation(fields: [campaignContactId], references: [id])
 }
 
-/**
- * AI Learning Pattern model for storing successful call patterns.
- * This table captures patterns from converted leads for future ML model training.
- * TODO: Future ML Implementation
- * - Use this data to train models that predict successful conversation patterns
- * - Build recommendation system for objection handling based on successful resolutions
- * - Create embeddings for transcript patterns and objection-resolution sequences
- * - Implement reinforcement learning to optimize AI responses
- */
+/// *
+///  * AI Learning Pattern model for storing successful call patterns.
+///  * This table captures patterns from converted leads for future ML model training.
+///  * TODO: Future ML Implementation
+///  * - Use this data to train models that predict successful conversation patterns
+///  * - Build recommendation system for objection handling based on successful resolutions
+///  * - Create embeddings for transcript patterns and objection-resolution sequences
+///  * - Implement reinforcement learning to optimize AI responses
 model AILearningPattern {
-  id                String  @id @default(cuid())
-  campaignContactId String // Reference to converted lead
-  callLogId         String? // Reference to specific successful call (if applicable)
-
-  // Successful transcript pattern data
-  transcriptPattern           Json? // Structured pattern: questions sequence, responses, flow
-  objectionResolutionSequence Json? // How objections were raised and resolved (sequence of objection → response → outcome)
-  conversationFlow            Json? // Overall conversation flow: opening → engagement → objection handling → closing
-
-  // Context data for pattern matching
-  initialStatus        LeadStatus? // Lead status at start of successful call sequence
-  finalStatus          LeadStatus? // Lead status at conversion
-  questionsAsked       String[]    @default([]) // Questions that led to conversion
-  objectionsRaised     String[]    @default([]) // Objections that were successfully resolved
-  sentimentProgression String[]    @default([]) // Sentiment changes throughout successful sequence
-
-  // Metadata
-  createdAt      DateTime  @default(now())
-  conversionDate DateTime? // When conversion actually happened
-
-  // TODO: Future fields for ML training
-  // embedding Vector?  // Vector embedding of successful pattern for similarity matching
-  // featureVector Json?  // Extracted features for model training
-  // modelVersion String?  // Which model version learned from this pattern
-
-  campaignContact CampaignContact @relation(fields: [campaignContactId], references: [id])
-  callLog         CallLog?        @relation(fields: [callLogId], references: [id])
+  id                          String          @id @default(cuid())
+  campaignContactId           String
+  callLogId                   String?
+  transcriptPattern           Json?
+  objectionResolutionSequence Json?
+  conversationFlow            Json?
+  initialStatus               LeadStatus?
+  finalStatus                 LeadStatus?
+  questionsAsked              String[]        @default([])
+  objectionsRaised            String[]        @default([])
+  sentimentProgression        String[]        @default([])
+  createdAt                   DateTime        @default(now())
+  conversionDate              DateTime?
+  callLog                     CallLog?        @relation(fields: [callLogId], references: [id])
+  campaignContact             CampaignContact @relation(fields: [campaignContactId], references: [id])
 }
 
 model BatchCallJob {
-  id         String   @id @default(cuid())
-  campaignId String
-  campaign   Campaign @relation(fields: [campaignId], references: [id])
-
+  id            String    @id @default(cuid())
+  campaignId    String
   status        String
-  currentIndex  Int    @default(0)
+  currentIndex  Int       @default(0)
   totalLeads    Int
   cooldownHours Int
   maxRetries    Int
-
-  startedAt   DateTime?
-  pausedAt    DateTime?
-  completedAt DateTime?
-  cancelledAt DateTime?
-  cancelledBy String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  startedAt     DateTime?
+  pausedAt      DateTime?
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+  cancelledBy   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  campaign      Campaign  @relation(fields: [campaignId], references: [id])
 }
 
 model OutcomeLearningPattern {
@@ -230,8 +178,7 @@ model OutcomeLearningPattern {
   outcomeBucket String?
   converted     Boolean  @default(false)
   createdAt     DateTime @default(now())
-
-  campaign Campaign @relation(fields: [campaignId], references: [id])
+  campaign      Campaign @relation(fields: [campaignId], references: [id])
 }
 
 enum LeadStatus {
