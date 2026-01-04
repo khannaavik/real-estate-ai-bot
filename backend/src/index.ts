@@ -6,6 +6,7 @@ import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { prisma } from "./prisma";
+import clerk from '@clerk/clerk-sdk-node';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
 type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 import { determineLeadStatusFromTranscript, extractConversationMemory, decideScriptMode, decideObjectionStrategy, type ScriptMode as LeadScoringScriptMode, type ObjectionStrategy } from "./leadScoring";
@@ -105,6 +106,77 @@ app.use(cors({
 // Note: multer handles multipart/form-data, so this won't interfere
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
+
+// Auth middleware - optional (graceful fallback)
+// Extends Request type with userId (optional, can be string or null)
+declare global {
+  namespace Express {
+    interface Request {
+      userId?: string | null;
+    }
+  }
+}
+
+async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  // Skip auth middleware for /health endpoint
+  if (req.path === '/health') {
+    return next();
+  }
+  
+  // Initialize userId as null (will remain null if no valid token)
+  req.userId = null;
+  
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      // No auth token - allow request to continue (userId is null)
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[AUTH] No Authorization header present');
+      }
+      return next();
+    }
+    
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    
+    // Verify JWT token with Clerk
+    const sessionClaims = await clerk.verifyToken(token);
+    
+    if (sessionClaims?.sub) {
+      // Map Clerk user to database User by email
+      const clerkEmail = (sessionClaims as any).email_addresses?.[0]?.email_address || (sessionClaims as any).email;
+      
+      if (clerkEmail) {
+        // Find User in database by email
+        const dbUser = await prisma.user.findUnique({
+          where: { email: clerkEmail },
+        });
+        
+        if (dbUser) {
+          req.userId = dbUser.id;
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[AUTH] Authenticated request - Clerk ID:', sessionClaims.sub, 'DB User ID:', dbUser.id);
+          }
+        } else {
+          // User not found in database - allow request to continue without userId
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[AUTH] Clerk user not found in database:', clerkEmail);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    // Token invalid or expired - allow request to continue without userId
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[AUTH] Token verification failed:', err?.message || err);
+    }
+  }
+  
+  next();
+}
+
+// Apply auth middleware (does not block requests)
+app.use(authMiddleware);
 
 // Health check route - must NOT depend on Twilio or OpenAI
 const serverStartTime = Date.now();
@@ -1787,8 +1859,17 @@ app.post("/debug/apply-score", async (req: Request, res: Response) => {
 // GET /campaigns
 app.get("/campaigns", async (req: Request, res: Response) => {
   try {
-    console.log("[DIAGNOSTIC] GET /campaigns - Starting database query...");
+    // If userId is null, return empty array (unauthenticated user)
+    if (req.userId === null || req.userId === undefined) {
+      console.log("[CAMPAIGNS] GET /campaigns - userId absent, returning empty array");
+      return res.json({ campaigns: [] });
+    }
+    
+    console.log("[CAMPAIGNS] GET /campaigns - userId present:", req.userId);
+    
+    // Filter campaigns by userId
     const campaigns = await prisma.campaign.findMany({
+      where: { userId: req.userId },
       select: { id: true, name: true, propertyId: true },
       orderBy: { createdAt: "desc" },
     });

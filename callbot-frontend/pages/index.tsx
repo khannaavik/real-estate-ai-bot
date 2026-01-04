@@ -1,5 +1,6 @@
 ﻿// pages/index.tsx
 import React, { useEffect, useState, useRef } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { useLiveEvents, type SSEEvent } from "../hooks/useLiveEvents";
 import { LeadStatusBadge, type LeadStatus } from "../components/LeadStatusBadge";
 import { LeadDrawer } from "../components/LeadDrawer";
@@ -17,12 +18,18 @@ type Campaign = {
   hotLeadsCount?: number;
 };
 
-async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 8000) {
+async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 8000, token?: string | null) {
   console.log("[DIAGNOSTIC] safeFetch - Request URL:", input);
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(input, { ...init, signal: controller.signal });
+    // Conditionally add Authorization header if token is provided
+    const headers: HeadersInit = {
+      ...(init?.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+    
+    const res = await fetch(input, { ...init, headers, signal: controller.signal });
     clearTimeout(id);
     console.log("[DIAGNOSTIC] safeFetch - Response status:", res.status, res.statusText);
     console.log("[DIAGNOSTIC] safeFetch - Response headers:", Object.fromEntries(res.headers.entries()));
@@ -51,6 +58,8 @@ async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 800
 }
 
 export default function Home() {
+  const { getToken } = useAuth();
+  
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [contacts, setContacts] = useState<CampaignContact[]>([]);
@@ -260,6 +269,17 @@ export default function Home() {
   };
 
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
+
+  // Centralized fetch helper that automatically attaches auth token
+  const authenticatedFetch = async (url: string, options?: RequestInit, timeoutMs = 8000) => {
+    try {
+      const token = await getToken();
+      return await safeFetch(url, options, timeoutMs, token || null);
+    } catch (err) {
+      // Silent fallback - if token retrieval fails, proceed without token
+      return await safeFetch(url, options, timeoutMs, null);
+    }
+  };
 
   // Handle incoming SSE events
   const handleLiveEvent = React.useCallback((event: SSEEvent) => {
@@ -1047,7 +1067,7 @@ export default function Home() {
         return;
       }
       console.log("[DIAGNOSTIC] fetchCampaigns - Calling API:", `${API_BASE}/campaigns`);
-      const data: any = await safeFetch(`${API_BASE}/campaigns`);
+      const data: any = await authenticatedFetch(`${API_BASE}/campaigns`);
       console.log("[DIAGNOSTIC] fetchCampaigns - Raw API response:", JSON.stringify(data, null, 2));
       console.log("[DIAGNOSTIC] fetchCampaigns - Response type:", Array.isArray(data) ? 'Array' : typeof data);
       console.log("[DIAGNOSTIC] fetchCampaigns - data?.campaigns:", data?.campaigns);
@@ -1055,10 +1075,12 @@ export default function Home() {
       const list = Array.isArray(data) ? data : (data?.campaigns || []);
       console.log("[DIAGNOSTIC] fetchCampaigns - Parsed list:", JSON.stringify(list, null, 2));
       console.log("[DIAGNOSTIC] fetchCampaigns - List length:", list.length);
+      
+      // Handle empty results gracefully (user not logged in or no campaigns)
       setCampaigns(list);
       console.log("[DIAGNOSTIC] fetchCampaigns - State set, campaigns count:", list.length);
       
-      // Auto-select first campaign if none is selected
+      // Auto-select first campaign if none is selected and campaigns exist
       if (list.length > 0 && !selectedCampaign) {
         console.log("[DIAGNOSTIC] fetchCampaigns - Auto-selecting first campaign:", list[0]);
         // Use setTimeout to ensure state update completes first
@@ -1097,7 +1119,7 @@ export default function Home() {
         ]);
         return;
       }
-      const data: any = await safeFetch(`${API_BASE}/campaigns/${c.id}/contacts`);
+      const data: any = await authenticatedFetch(`${API_BASE}/campaigns/${c.id}/contacts`);
       const list = Array.isArray(data) ? data : data?.contacts || [];
       setContacts(list);
     } catch (err: any) {
@@ -1122,7 +1144,7 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const res = await safeFetch(`${API_BASE}/call/start/${campaignContactId}`, { method: "POST" });
+      const res = await authenticatedFetch(`${API_BASE}/call/start/${campaignContactId}`, { method: "POST" });
       setToast((res && (res as any).message) || "Call started — ringing the contact");
       if (selectedCampaign) openCampaign(selectedCampaign);
     } catch (err: any) {
@@ -1224,7 +1246,7 @@ export default function Home() {
         return;
       }
 
-      const res = await safeFetch(`${API_BASE}/batch/start/${selectedCampaign.id}`, {
+      const res = await authenticatedFetch(`${API_BASE}/batch/start/${selectedCampaign.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1333,7 +1355,7 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const res = await safeFetch(`${API_BASE}/debug/apply-score`, {
+      const res = await authenticatedFetch(`${API_BASE}/debug/apply-score`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ callLogId: activeCallLogId, transcript, durationSeconds }),
@@ -2167,7 +2189,7 @@ export default function Home() {
                 return;
               }
               const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-              const res = await safeFetch(`${API_BASE}/batch/pause/${batchJob.batchJobId}`, {
+              const res = await authenticatedFetch(`${API_BASE}/batch/pause/${batchJob.batchJobId}`, {
                 method: 'POST',
               });
               if ((res as any).ok) {
@@ -2188,7 +2210,7 @@ export default function Home() {
                 return;
               }
               const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-              const res = await safeFetch(`${API_BASE}/batch/resume/${batchJob.batchJobId}`, {
+              const res = await authenticatedFetch(`${API_BASE}/batch/resume/${batchJob.batchJobId}`, {
                 method: 'POST',
               });
               if ((res as any).ok) {
@@ -2209,7 +2231,7 @@ export default function Home() {
                 return;
               }
               const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-              const res = await safeFetch(`${API_BASE}/batch/stop/${batchJob.batchJobId}`, {
+              const res = await authenticatedFetch(`${API_BASE}/batch/stop/${batchJob.batchJobId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cancelledBy: 'User' }),
