@@ -81,45 +81,33 @@ const upload = multer({
   },
 });
 
-// Middleware - CORS configuration for multipart requests
+// Middleware - CORS configuration
 // Must be applied BEFORE routes
 const allowedOrigins = [
-  'https://real-estate-ai-bot-2424.vercel.app',
   'http://localhost:3000',
+  'https://real-estate-ai-bot-2424.vercel.app',
   'http://localhost:5173',
   ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
 ];
 
-// Apply CORS conditionally - skip for /health endpoint
-app.use((req: Request, res: Response, next: NextFunction) => {
-  if (req.path === '/health') {
-    // Skip CORS for /health endpoint - allow requests without origin
-    return next();
-  }
-  // Apply CORS for all other routes
-  cors({
-    origin: (origin, callback) => {
-      // In production, require origin header for cross-origin requests
-      // Allow requests with no origin only in development (for testing)
-      if (!origin && process.env.NODE_ENV === 'development') {
-        return callback(null, true);
-      }
-      
-      if (!origin) {
-        return callback(new Error('CORS: Origin header required'));
-      }
-      
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })(req, res, next);
-});
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests without origin header (health checks, Railway, server-to-server, SSE)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // If origin is defined, check against allowed origins
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 // Body parser middleware (for JSON/form-urlencoded)
 // Note: multer handles multipart/form-data, so this won't interfere
