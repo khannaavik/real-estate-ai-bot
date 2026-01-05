@@ -61,6 +61,17 @@ function getTwilioClient() {
 
 const app = express();
 
+// Server start time for uptime calculation (zero-dependency)
+const serverStartTime = Date.now();
+
+// Health check route - ZERO dependencies (must be BEFORE all middleware)
+// Must NOT use Prisma, auth, env vars, or throw errors
+app.get('/health', (_req: Request, res: Response) => {
+  const uptime = Math.floor((Date.now() - serverStartTime) / 1000); // uptime in seconds
+  const timestamp = new Date().toISOString();
+  res.json({ ok: true, uptime, timestamp });
+});
+
 // Configure multer for file uploads (memory storage for CSV)
 // Must be configured BEFORE bodyParser middleware
 const upload = multer({
@@ -177,12 +188,6 @@ async function authMiddleware(req: Request, res: Response, next: NextFunction) {
 
 // Apply auth middleware (does not block requests)
 app.use(authMiddleware);
-
-// Health check route - must NOT depend on Twilio or OpenAI
-const serverStartTime = Date.now();
-app.get('/health', async (req: Request, res: Response) => {
-  res.json({ ok: true });
-});
 
 // SSE endpoint for real-time updates
 app.get('/events', (req: Request, res: Response) => {
