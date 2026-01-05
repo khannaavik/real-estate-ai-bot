@@ -66,10 +66,10 @@ const serverStartTime = Date.now();
 
 // Health check route - ZERO dependencies (must be BEFORE all middleware)
 // Must NOT use Prisma, auth, env vars, or throw errors
+// Must work even with NO Origin header (CORS bypass)
 app.get('/health', (_req: Request, res: Response) => {
-  const uptime = Math.floor((Date.now() - serverStartTime) / 1000); // uptime in seconds
   const timestamp = new Date().toISOString();
-  res.json({ ok: true, uptime, timestamp });
+  res.json({ ok: true, status: "healthy", timestamp });
 });
 
 // Configure multer for file uploads (memory storage for CSV)
@@ -90,28 +90,36 @@ const allowedOrigins = [
   ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
 ];
 
-app.use(cors({
-  origin: (origin, callback) => {
-    // In production, require origin header for cross-origin requests
-    // Allow requests with no origin only in development (for testing)
-    if (!origin && process.env.NODE_ENV === 'development') {
-      return callback(null, true);
-    }
-    
-    if (!origin) {
-      return callback(new Error('CORS: Origin header required'));
-    }
-    
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// Apply CORS conditionally - skip for /health endpoint
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path === '/health') {
+    // Skip CORS for /health endpoint - allow requests without origin
+    return next();
+  }
+  // Apply CORS for all other routes
+  cors({
+    origin: (origin, callback) => {
+      // In production, require origin header for cross-origin requests
+      // Allow requests with no origin only in development (for testing)
+      if (!origin && process.env.NODE_ENV === 'development') {
+        return callback(null, true);
+      }
+      
+      if (!origin) {
+        return callback(new Error('CORS: Origin header required'));
+      }
+      
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })(req, res, next);
+});
 
 // Body parser middleware (for JSON/form-urlencoded)
 // Note: multer handles multipart/form-data, so this won't interfere
