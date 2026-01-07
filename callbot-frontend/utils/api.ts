@@ -19,9 +19,9 @@ export async function authenticatedFetch(
   options?: RequestInit,
   token?: string | null
 ): Promise<any> {
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options?.headers || {}),
+    ...(options?.headers as Record<string, string> || {}),
   };
 
   if (token) {
@@ -30,7 +30,7 @@ export async function authenticatedFetch(
 
   const response = await fetch(url, {
     ...options,
-    headers,
+    headers: headers as HeadersInit,
   });
 
   if (!response.ok) {
