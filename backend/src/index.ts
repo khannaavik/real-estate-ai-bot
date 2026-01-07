@@ -1875,15 +1875,20 @@ app.post("/debug/apply-score", async (req: Request, res: Response) => {
 // GET /campaigns
 app.get("/campaigns", async (req: Request, res: Response) => {
   try {
-    // Get userId from Clerk auth middleware
+    // Get userId from Clerk auth middleware (should always be present if middleware passed)
     const userId = req.auth?.userId;
     
     if (!userId) {
-      console.log("[CAMPAIGNS] GET /campaigns - userId absent, returning empty array");
-      return res.json({ campaigns: [] });
+      // This should never happen if middleware is working correctly
+      console.error("[CAMPAIGNS] ✗ GET /campaigns - userId missing, auth middleware may have failed");
+      return res.status(401).json({ 
+        ok: false, 
+        error: 'Unauthorized',
+        campaigns: [] 
+      });
     }
     
-    console.log("[CAMPAIGNS] userId resolved:", userId);
+    console.log("[CAMPAIGNS] ✓ GET /campaigns - userId:", userId);
     
     // Filter campaigns by userId
     const campaigns = await prisma.campaign.findMany({

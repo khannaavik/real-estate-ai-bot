@@ -1,6 +1,7 @@
 ﻿// pages/index.tsx
 import React, { useEffect, useState, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
+import { getApiBaseUrl } from "../utils/api";
 import { useLiveEvents, type SSEEvent } from "../hooks/useLiveEvents";
 import { LeadStatusBadge, type LeadStatus } from "../components/LeadStatusBadge";
 import { LeadDrawer } from "../components/LeadDrawer";
@@ -19,7 +20,10 @@ type Campaign = {
 };
 
 async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 8000, token?: string | null) {
-  console.log("[DIAGNOSTIC] safeFetch - Request URL:", input);
+  const url = typeof input === 'string' ? input : input.toString();
+  console.log("[FETCH] Request:", init?.method || 'GET', url);
+  console.log("[FETCH] Has token:", !!token);
+  
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -31,26 +35,25 @@ async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 800
     
     const res = await fetch(input, { ...init, headers, signal: controller.signal });
     clearTimeout(id);
-    console.log("[DIAGNOSTIC] safeFetch - Response status:", res.status, res.statusText);
-    console.log("[DIAGNOSTIC] safeFetch - Response headers:", Object.fromEntries(res.headers.entries()));
+    console.log("[FETCH] Response:", res.status, res.statusText);
+    
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error("[DIAGNOSTIC] safeFetch - Error response body:", text);
+      console.error("[FETCH] Error response:", res.status, text);
       throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
     }
     const ct = res.headers.get("content-type") || "";
-    console.log("[DIAGNOSTIC] safeFetch - Content-Type:", ct);
     if (ct.includes("application/json")) {
       const jsonData = await res.json();
-      console.log("[DIAGNOSTIC] safeFetch - Parsed JSON:", JSON.stringify(jsonData, null, 2));
       return jsonData;
     }
     const textData = await res.text();
-    console.log("[DIAGNOSTIC] safeFetch - Text response:", textData);
     return textData;
   } catch (err: any) {
-    console.error("[DIAGNOSTIC] safeFetch - Exception:", err?.message || err);
-    console.error("[DIAGNOSTIC] safeFetch - Exception type:", err?.name);
+    console.error("[FETCH] Exception:", err?.message || err);
+    if (err.name === 'AbortError') {
+      throw new Error('Request timeout');
+    }
     throw err;
   } finally {
     clearTimeout(id);
@@ -268,16 +271,18 @@ export default function Home() {
     });
   };
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000";
+  const API_BASE = getApiBaseUrl();
 
   // Centralized fetch helper that automatically attaches auth token
   const authenticatedFetch = async (url: string, options?: RequestInit, timeoutMs = 8000) => {
     try {
       const token = await getToken();
+      console.log("[AUTH] Fetching token:", token ? "✓ Token obtained" : "✗ No token available");
       return await safeFetch(url, options, timeoutMs, token || null);
     } catch (err) {
-      // Silent fallback - if token retrieval fails, proceed without token
-      return await safeFetch(url, options, timeoutMs, null);
+      console.error("[AUTH] Token retrieval failed:", err);
+      // For protected routes, fail if token can't be retrieved
+      throw new Error("Authentication required");
     }
   };
 
@@ -1016,8 +1021,16 @@ export default function Home() {
         });
         
         clearTimeout(timeoutId);
-        setBackendHealth(response.ok ? 'online' : 'offline');
+        const isOnline = response.ok;
+        setBackendHealth(isOnline ? 'online' : 'offline');
+        
+        // Disable mock mode when backend is online
+        if (isOnline && mockMode) {
+          console.log("[HEALTH] Backend is online, disabling mock mode");
+          setMockMode(false);
+        }
       } catch (err) {
+        console.error("[HEALTH] Backend health check failed:", err);
         setBackendHealth('offline');
       }
     };
@@ -1066,22 +1079,19 @@ export default function Home() {
         ]);
         return;
       }
-      console.log("[DIAGNOSTIC] fetchCampaigns - Calling API:", `${API_BASE}/campaigns`);
+      console.log("[FETCH] Calling GET /campaigns with auth token");
       const data: any = await authenticatedFetch(`${API_BASE}/campaigns`);
-      console.log("[DIAGNOSTIC] fetchCampaigns - Raw API response:", JSON.stringify(data, null, 2));
-      console.log("[DIAGNOSTIC] fetchCampaigns - Response type:", Array.isArray(data) ? 'Array' : typeof data);
-      console.log("[DIAGNOSTIC] fetchCampaigns - data?.campaigns:", data?.campaigns);
+      console.log("[FETCH] Response received:", JSON.stringify(data, null, 2));
+      
       // Backend returns { campaigns: [...] }, so extract campaigns array
       const list = Array.isArray(data) ? data : (data?.campaigns || []);
-      console.log("[DIAGNOSTIC] fetchCampaigns - Parsed list:", JSON.stringify(list, null, 2));
-      console.log("[DIAGNOSTIC] fetchCampaigns - List length:", list.length);
+      console.log("[FETCH] Parsed campaigns list, length:", list.length);
       
-      // Disable mock mode on successful backend response
-      if (list.length > 0 || (data && !data.error)) {
-        if (mockMode) {
-          console.log("[DIAGNOSTIC] fetchCampaigns - Backend responded successfully, disabling mock mode");
-          setMockMode(false);
-        }
+      // Disable mock mode on ANY successful backend response (even if empty array)
+      // A successful response means backend is reachable and auth worked
+      if (mockMode) {
+        console.log("[FETCH] Backend responded successfully, disabling mock mode");
+        setMockMode(false);
       }
       
       // Handle empty results gracefully (user not logged in or no campaigns)
@@ -1097,13 +1107,28 @@ export default function Home() {
         }, 0);
       }
     } catch (err: any) {
-      console.error("[DIAGNOSTIC] fetchCampaigns error:", err?.message || err);
-      console.error("[DIAGNOSTIC] fetchCampaigns error stack:", err?.stack);
-      setToast("API unreachable — switching to Mock Mode. Toggle at top-right to retry API.");
-      setMockMode(true); // This will also save to localStorage via our wrapper
-      setCampaigns([
-        { id: "mock-c1", name: "Mock Campaign 1", propertyId: "mock-p1" },
-      ]);
+      const errorMessage = err?.message || String(err);
+      console.error("[FETCH] Error fetching campaigns:", errorMessage);
+      console.error("[FETCH] Error details:", {
+        message: err?.message,
+        stack: err?.stack,
+        name: err?.name,
+      });
+      
+      // Only enable mock mode for network/connection errors, not auth errors
+      if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+        setToast("Authentication failed. Please sign in again.");
+        setCampaigns([]);
+      } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('network')) {
+        setToast("Backend unreachable — switching to Mock Mode. Check connection and retry.");
+        setMockMode(true);
+        setCampaigns([
+          { id: "mock-c1", name: "Mock Campaign 1", propertyId: "mock-p1" },
+        ]);
+      } else {
+        setToast(`Error: ${errorMessage}`);
+        setCampaigns([]);
+      }
     } finally {
       setLoading(false);
       console.log("[DIAGNOSTIC] fetchCampaigns - Complete, loading set to false");
