@@ -1,6 +1,7 @@
 // hooks/useLiveEvents.ts
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { LeadTimelineEvent } from '../types/lead';
+import { getApiBaseUrl } from '../utils/api';
 
 export type EventType = 'CALL_STARTED' | 'CALL_ENDED' | 'LEAD_UPDATED' | 'CALL_OUTCOME_PREDICTED' | 'CALL_CONTEXT_UPDATED' | 'VOICE_STRATEGY_UPDATED' | 'ADAPTIVE_STEP_UPDATED' | 'LEARNING_STRATEGY_APPLIED' | 'HUMAN_OVERRIDE_APPLIED' | 'BATCH_STARTED' | 'BATCH_PROGRESS' | 'BATCH_PAUSED' | 'BATCH_RESUMED' | 'BATCH_COMPLETED' | 'BATCH_CANCELLED' | 'BATCH_SKIPPED_OUTSIDE_TIME_WINDOW' | 'OUTCOME_LEARNING_UPDATED' | 'STRATEGY_SELECTED' | 'STRATEGY_AUTO_APPLIED' | 'CALL_LIVE_UPDATE' | 'CALL_LIVE_RISK' | 'CALL_LIVE_SUGGESTION' | 'CALL_SELF_REVIEW_READY' | 'LEAD_CREATED' | 'CAMPAIGN_CREATED' | 'connected';
 
@@ -143,7 +144,7 @@ function mapSSEToTimelineEvent(sseEvent: SSEEvent): LeadTimelineEvent | null {
 
 export function useLiveEvents(options: UseLiveEventsOptions = {}) {
   const { 
-    apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000', 
+    apiBase = getApiBaseUrl(),
     onEvent,
     onTimelineEvent,
     campaignContactId,

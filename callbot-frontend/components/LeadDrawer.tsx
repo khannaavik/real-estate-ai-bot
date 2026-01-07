@@ -1589,7 +1589,6 @@ export function LeadDrawer({
                                   return;
                                 }
                                 try {
-                                  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
                                   // Store feedback (could be added to a feedback endpoint later)
                                   alert('Feedback saved (feature to be implemented)');
                                   setHumanFeedback('');

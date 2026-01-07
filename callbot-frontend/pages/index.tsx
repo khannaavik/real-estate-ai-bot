@@ -1,6 +1,7 @@
 ﻿// pages/index.tsx
 import React, { useEffect, useState, useRef } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, SignInButton } from "@clerk/nextjs";
+import { useRouter } from "next/router";
 import { getApiBaseUrl, authenticatedFetch } from "../utils/api";
 import { useLiveEvents, type SSEEvent } from "../hooks/useLiveEvents";
 import { LeadStatusBadge, type LeadStatus } from "../components/LeadStatusBadge";
@@ -61,6 +62,7 @@ async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 800
 }
 
 export default function Home() {
+  const router = useRouter();
   const { getToken, isLoaded, isSignedIn } = useAuth();
   
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -1058,11 +1060,9 @@ export default function Home() {
         setBackendHealth('online');
         setAuthStatus('authenticated');
         
-        // Disable mock mode when backend is online and authenticated
-        if (mockMode) {
-          console.log("[HEALTH] Backend is online and authenticated, disabling mock mode");
-          setMockMode(false);
-        }
+        // Disable mock mode immediately when backend is online and authenticated
+        setMockMode(false);
+        console.log("[HEALTH] Backend is online and authenticated, mock mode disabled");
       } catch (err: any) {
         const errorMessage = err?.message || String(err);
         console.error("[HEALTH] Backend health check failed:", errorMessage);
@@ -1088,6 +1088,26 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [API_BASE, mockMode, isLoaded, isSignedIn]);
 
+  // Auth gating: Redirect to sign-in if not signed in (after Clerk loads)
+  useEffect(() => {
+    if (!isLoaded) {
+      // Wait for Clerk to load
+      return;
+    }
+
+    if (!isSignedIn) {
+      console.log("[AUTH] User not signed in, redirecting to /sign-in");
+      setAuthStatus('required');
+      setCampaigns([]);
+      // Redirect to sign-in page
+      router.push('/sign-in');
+      return;
+    }
+
+    // User is signed in, proceed with normal flow
+    setAuthStatus('authenticated');
+  }, [isLoaded, isSignedIn, router]);
+
   // Fetch campaigns when Clerk is loaded and user is signed in
   useEffect(() => {
     if (!isLoaded) {
@@ -1096,9 +1116,7 @@ export default function Home() {
     }
 
     if (!isSignedIn) {
-      console.log("[DIAGNOSTIC] User not signed in, skipping fetchCampaigns");
-      setAuthStatus('required');
-      setCampaigns([]);
+      // Don't fetch if not signed in (will redirect)
       return;
     }
 
@@ -1144,12 +1162,10 @@ export default function Home() {
       const list = Array.isArray(data) ? data : (data?.campaigns || []);
       console.log("[FETCH] Parsed campaigns list, length:", list.length);
       
-      // Disable mock mode on ANY successful backend response (even if empty array)
+      // Disable mock mode immediately on successful backend response (even if empty array)
       // A successful response means backend is reachable and auth worked
-      if (mockMode) {
-        console.log("[FETCH] Backend responded successfully, disabling mock mode");
-        setMockMode(false);
-      }
+      setMockMode(false);
+      console.log("[FETCH] Backend responded successfully, mock mode disabled");
       
       // Update auth status on success
       setAuthStatus('authenticated');
@@ -1181,7 +1197,8 @@ export default function Home() {
         setAuthStatus('required');
         setToast("Authentication required. Please sign in.");
         setCampaigns([]);
-        // DO NOT activate mock mode on 401
+        // DO NOT activate mock mode on 401 - redirect will handle this
+        // Don't show backend offline error for auth issues
       } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
         // Only activate mock mode on actual network/connection errors
         console.warn("[FETCH] Network error - Backend unreachable, activating mock mode");
@@ -1558,16 +1575,27 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <span className="text-gray-600 font-medium">Status:</span>
               {/* Auth Status */}
-              <div className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${
-                  authStatus === 'authenticated' ? 'bg-green-500' :
-                  authStatus === 'required' ? 'bg-red-500' :
-                  'bg-yellow-500 animate-pulse'
-                }`}></span>
-                <span className="text-gray-700">
-                  Auth {authStatus === 'authenticated' ? 'OK' : authStatus === 'required' ? 'Required' : 'Checking...'}
-                </span>
-              </div>
+              {isLoaded && !isSignedIn ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-red-600 font-medium text-xs">Authentication required</span>
+                  <SignInButton mode="modal">
+                    <button className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors">
+                      Sign In
+                    </button>
+                  </SignInButton>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${
+                    authStatus === 'authenticated' ? 'bg-green-500' :
+                    authStatus === 'required' ? 'bg-red-500' :
+                    'bg-yellow-500 animate-pulse'
+                  }`}></span>
+                  <span className="text-gray-700">
+                    Auth {authStatus === 'authenticated' ? 'OK' : authStatus === 'required' ? 'Required' : 'Checking...'}
+                  </span>
+                </div>
+              )}
               {/* Backend Health */}
               <div className="flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full ${
@@ -2297,7 +2325,6 @@ export default function Home() {
                 setToast('(Mock) Batch paused');
                 return;
               }
-              const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
               const res = await apiFetch(`${API_BASE}/batch/pause/${batchJob.batchJobId}`, {
                 method: 'POST',
               });
@@ -2318,7 +2345,6 @@ export default function Home() {
                 setToast('(Mock) Batch resumed');
                 return;
               }
-              const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
               const res = await apiFetch(`${API_BASE}/batch/resume/${batchJob.batchJobId}`, {
                 method: 'POST',
               });
@@ -2339,7 +2365,6 @@ export default function Home() {
                 setToast('(Mock) Batch stopped');
                 return;
               }
-              const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
               const res = await apiFetch(`${API_BASE}/batch/stop/${batchJob.batchJobId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
