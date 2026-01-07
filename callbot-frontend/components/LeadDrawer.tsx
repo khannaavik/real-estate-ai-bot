@@ -38,15 +38,29 @@ export function LeadDrawer({
   isReconnecting = false,
   sseError = null,
 }: LeadDrawerProps) {
-  const { getToken } = useAuth();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const API_BASE = getApiBaseUrl();
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   
   // Helper function for authenticated requests
+  // Ensures Clerk is loaded and user is signed in before making requests
   const makeAuthenticatedRequest = async (url: string, options?: RequestInit) => {
+    // Check Clerk state
+    if (!isLoaded) {
+      throw new Error('Clerk not loaded');
+    }
+
+    if (!isSignedIn) {
+      throw new Error('Authentication required: Please sign in');
+    }
+
     const token = await getToken();
-    return await authenticatedFetch(url, options, token || null);
+    if (!token) {
+      throw new Error('Authentication required: No token available');
+    }
+
+    return await authenticatedFetch(url, options, token);
   };
   const [timelineEvents, setTimelineEvents] = useState<LeadTimelineEvent[]>([]);
   const [displayLead, setDisplayLead] = useState<CampaignContact | null>(lead);
@@ -936,10 +950,9 @@ export function LeadDrawer({
                             return;
                           }
                           try {
-                            const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/convert`, {
+                            const data = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/convert`, {
                               method: 'POST',
                             });
-                            const data = await res.json();
                             if (data.ok) {
                               alert('Lead marked as converted');
                             }
@@ -1005,16 +1018,14 @@ export function LeadDrawer({
                                     return;
                                   }
                                   try {
-                                    const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                    const data = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                       method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
                                         stopBatch: true,
                                         overrideReason: 'Human override: Stop batch',
                                         overriddenBy: overrideForm.overriddenBy || 'Operator',
                                       }),
                                     });
-                                    const data = await res.json();
                                     if (data.ok) {
                                       alert('Batch stopped successfully');
                                     }
@@ -1043,16 +1054,14 @@ export function LeadDrawer({
                                     return;
                                   }
                                   try {
-                                    const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                    const data = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                       method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
                                         stopCurrentCall: true,
                                         overrideReason: 'Human override: End call',
                                         overriddenBy: overrideForm.overriddenBy || 'Operator',
                                       }),
                                     });
-                                    const data = await res.json();
                                     if (data.ok) {
                                       alert('Call ended successfully');
                                     }
@@ -1081,16 +1090,14 @@ export function LeadDrawer({
                                     return;
                                   }
                                   try {
-                                    const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                    const data = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                       method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
                                         status: 'HOT',
                                         overrideReason: 'Human override: Force HOT status',
                                         overriddenBy: overrideForm.overriddenBy || 'Operator',
                                       }),
                                     });
-                                    const data = await res.json();
                                     if (data.ok) {
                                       setDisplayLead({ ...displayLead, status: 'HOT' });
                                       if (onLeadStatusUpdate) {
@@ -1123,16 +1130,14 @@ export function LeadDrawer({
                                     return;
                                   }
                                   try {
-                                    const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                    const data = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                       method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
                                         status: 'COLD',
                                         overrideReason: 'Human override: Drop lead',
                                         overriddenBy: overrideForm.overriddenBy || 'Operator',
                                       }),
                                     });
-                                    const data = await res.json();
                                     if (data.ok) {
                                       setDisplayLead({ ...displayLead, status: 'COLD' });
                                       if (onLeadStatusUpdate) {
@@ -1324,7 +1329,6 @@ export function LeadDrawer({
                             }
                             setIsSavingOverride(true);
                             try {
-                              const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
                               const overrideData: any = {};
                               if (overrideForm.scriptMode) overrideData.scriptMode = overrideForm.scriptMode;
                               if (overrideForm.scriptVariant) overrideData.scriptVariant = overrideForm.scriptVariant;
@@ -1339,12 +1343,10 @@ export function LeadDrawer({
                               if (overrideForm.overrideReason) overrideData.overrideReason = overrideForm.overrideReason;
                               if (overrideForm.overriddenBy) overrideData.overriddenBy = overrideForm.overriddenBy;
                               
-                              const res = await fetch(`${API_BASE}/leads/${displayLead.id}/override`, {
+                              const data = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(overrideData),
                               });
-                              const data = await res.json();
                               if (data.ok) {
                                 // Update local state
                                 setDisplayLead({
@@ -1352,9 +1354,13 @@ export function LeadDrawer({
                                   humanOverride: data.override,
                                 });
                               }
-                            } catch (err) {
+                            } catch (err: any) {
                               console.error('Failed to save override:', err);
-                              alert('Failed to save override');
+                              if (err?.message?.includes('401') || err?.message?.includes('Authentication required')) {
+                                alert('Authentication required. Please sign in.');
+                              } else {
+                                alert('Failed to save override');
+                              }
                             } finally {
                               setIsSavingOverride(false);
                             }
@@ -1372,10 +1378,9 @@ export function LeadDrawer({
                                 return;
                               }
                               try {
-                              const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                const data = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                   method: 'DELETE',
                                 });
-                                const data = await res.json();
                                 if (data.ok) {
                                   setDisplayLead({
                                     ...displayLead,
@@ -1717,9 +1722,7 @@ export function LeadDrawer({
                                         return;
                                       }
                                       try {
-                                        const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                                        const res = await makeAuthenticatedRequest(`${API_BASE}/call/${event.callLogId}/review`);
-                                        const data = await res.json();
+                                        const data = await makeAuthenticatedRequest(`${API_BASE}/call/${event.callLogId}/review`);
                                         if (data.ok && data.selfReview) {
                                           setCallReview(data.selfReview);
                                           setSelectedCallId(event.callLogId || null);

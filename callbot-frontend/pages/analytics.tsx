@@ -10,7 +10,7 @@ type Campaign = { id: string; name: string; propertyId: string };
 export default function AnalyticsPage() {
   const router = useRouter();
   const { campaignId } = router.query;
-  const { getToken } = useAuth();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [mockMode, setMockMode] = useState<boolean>(false);
@@ -32,6 +32,17 @@ export default function AnalyticsPage() {
       return;
     }
 
+    // Wait for Clerk to load
+    if (!isLoaded) {
+      return;
+    }
+
+    // Check if user is signed in
+    if (!isSignedIn) {
+      setLoading(false);
+      return;
+    }
+
     const fetchCampaign = async () => {
       try {
         if (mockMode) {
@@ -45,7 +56,13 @@ export default function AnalyticsPage() {
         }
 
         const token = await getToken();
-        const data = await authenticatedFetch(`${API_BASE}/campaigns`, undefined, token || null);
+        if (!token) {
+          console.error('No token available');
+          setLoading(false);
+          return;
+        }
+
+        const data = await authenticatedFetch(`${API_BASE}/campaigns`, undefined, token);
         const campaigns = Array.isArray(data) ? data : data?.campaigns || [];
         const foundCampaign = campaigns.find((c: Campaign) => c.id === campaignId);
         
@@ -56,15 +73,21 @@ export default function AnalyticsPage() {
             setMockMode(false);
           }
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to fetch campaign:', err);
+        // Don't activate mock mode on 401
+        if (err?.message?.includes('401') || err?.message?.includes('Authentication required')) {
+          // Auth error - don't activate mock mode
+        } else if (err?.message?.includes('Network error')) {
+          // Network error - could activate mock mode if needed
+        }
       } finally {
         setLoading(false);
       }
     };
 
     fetchCampaign();
-  }, [campaignId, API_BASE, mockMode]);
+  }, [campaignId, API_BASE, mockMode, isLoaded, isSignedIn, getToken]);
 
   if (loading) {
     return (
@@ -143,15 +166,26 @@ export default function AnalyticsPage() {
               </div>
               <button
                 onClick={async () => {
+                  // Check Clerk state
+                  if (!isLoaded || !isSignedIn) {
+                    alert('Please sign in to start batch calls.');
+                    return;
+                  }
+
                   try {
                     const token = await getToken();
+                    if (!token) {
+                      alert('Authentication required. Please sign in.');
+                      return;
+                    }
+
                     const data = await authenticatedFetch(`${API_BASE}/batch/start/${campaignId}`, {
                       method: 'POST',
                       body: JSON.stringify({
                         cooldownHours: 24,
                         maxRetries: 2,
                       }),
-                    }, token || null);
+                    }, token);
                     if (data.ok) {
                       alert(`Batch call started: ${data.totalLeads} leads queued`);
                       // Refresh page to show updated status
@@ -161,7 +195,11 @@ export default function AnalyticsPage() {
                     }
                   } catch (err: any) {
                     console.error('Failed to start batch:', err);
-                    alert('Failed to start batch call. See console for details.');
+                    if (err?.message?.includes('401') || err?.message?.includes('Authentication required')) {
+                      alert('Authentication required. Please sign in.');
+                    } else {
+                      alert('Failed to start batch call. See console for details.');
+                    }
                   }
                 }}
                 className="px-6 py-3 bg-emerald-600 text-white text-sm font-semibold rounded-md hover:bg-emerald-700 transition-colors"

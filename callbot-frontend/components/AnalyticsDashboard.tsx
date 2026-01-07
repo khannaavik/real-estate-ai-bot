@@ -1,7 +1,9 @@
 // components/AnalyticsDashboard.tsx
 import React, { useEffect, useState } from 'react';
+import { useAuth } from '@clerk/nextjs';
 import { useLiveEvents, type SSEEvent } from '../hooks/useLiveEvents';
 import { getOutcomeBucketLabel } from '../utils/labelHelpers';
+import { authenticatedFetch, getApiBaseUrl } from '../utils/api';
 
 interface AnalyticsDashboardProps {
   campaignId: string;
@@ -54,6 +56,7 @@ interface RecentActivity {
 }
 
 export function AnalyticsDashboard({ campaignId, campaignName, mockMode = false }: AnalyticsDashboardProps) {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [kpis, setKpis] = useState<KPIs | null>(null);
   const [funnel, setFunnel] = useState<FunnelData | null>(null);
   const [batchPerformance, setBatchPerformance] = useState<BatchJob[]>([]);
@@ -62,7 +65,7 @@ export function AnalyticsDashboard({ campaignId, campaignName, mockMode = false 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
+  const API_BASE = getApiBaseUrl();
 
   // Fetch analytics data
   useEffect(() => {
@@ -111,13 +114,27 @@ export function AnalyticsDashboard({ campaignId, campaignName, mockMode = false 
     }
 
     const fetchAnalytics = async () => {
+      // Wait for Clerk to load
+      if (!isLoaded) {
+        return;
+      }
+
+      // Check if user is signed in
+      if (!isSignedIn) {
+        setError('Authentication required. Please sign in.');
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
-        const res = await fetch(`${API_BASE}/analytics/overview/${campaignId}`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        const token = await getToken();
+        if (!token) {
+          throw new Error('Authentication required: No token available');
         }
-        const data = await res.json();
+
+        const data = await authenticatedFetch(`${API_BASE}/analytics/overview/${campaignId}`, undefined, token);
+        
         if (data.ok) {
           setKpis(data.kpis);
           setFunnel(data.funnel);
@@ -128,14 +145,20 @@ export function AnalyticsDashboard({ campaignId, campaignName, mockMode = false 
         }
       } catch (err: any) {
         console.error('Failed to fetch analytics:', err);
-        setError(err?.message || 'Failed to load analytics');
+        const errorMessage = err?.message || 'Failed to load analytics';
+        setError(errorMessage);
+        
+        // Don't treat 401 as a general error - it's an auth issue
+        if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
+          setError('Authentication required. Please sign in.');
+        }
       } finally {
         setLoading(false);
       }
     };
 
     fetchAnalytics();
-  }, [campaignId, API_BASE, mockMode]);
+  }, [campaignId, API_BASE, mockMode, isLoaded, isSignedIn, getToken]);
 
   // Handle live events for recent activity feed
   const handleLiveEvent = React.useCallback((event: SSEEvent) => {

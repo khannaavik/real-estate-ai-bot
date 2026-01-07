@@ -1,7 +1,7 @@
 ﻿// pages/index.tsx
 import React, { useEffect, useState, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { getApiBaseUrl } from "../utils/api";
+import { getApiBaseUrl, authenticatedFetch } from "../utils/api";
 import { useLiveEvents, type SSEEvent } from "../hooks/useLiveEvents";
 import { LeadStatusBadge, type LeadStatus } from "../components/LeadStatusBadge";
 import { LeadDrawer } from "../components/LeadDrawer";
@@ -61,7 +61,7 @@ async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 800
 }
 
 export default function Home() {
-  const { getToken } = useAuth();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
@@ -73,6 +73,7 @@ export default function Home() {
   const [transcript, setTranscript] = useState("");
   const [durationSeconds, setDurationSeconds] = useState<number>(90);
   const [backendHealth, setBackendHealth] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'required'>('checking');
   const [selectedLead, setSelectedLead] = useState<CampaignContact | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const previousFocusElementRef = React.useRef<HTMLElement | null>(null);
@@ -274,15 +275,42 @@ export default function Home() {
   const API_BASE = getApiBaseUrl();
 
   // Centralized fetch helper that automatically attaches auth token
-  const authenticatedFetch = async (url: string, options?: RequestInit, timeoutMs = 8000) => {
+  // This ensures Clerk is loaded and user is signed in before making API calls
+  const apiFetch = async (url: string, options?: RequestInit, timeoutMs = 8000) => {
+    // Wait for Clerk to load
+    if (!isLoaded) {
+      console.warn("[API] Clerk not loaded yet, waiting...");
+      throw new Error("Clerk not loaded");
+    }
+
+    // Check if user is signed in
+    if (!isSignedIn) {
+      console.warn("[API] User not signed in");
+      setAuthStatus('required');
+      throw new Error("Authentication required: Please sign in");
+    }
+
     try {
+      // Get token immediately before fetch
       const token = await getToken();
-      console.log("[AUTH] Fetching token:", token ? "✓ Token obtained" : "✗ No token available");
-      return await safeFetch(url, options, timeoutMs, token || null);
-    } catch (err) {
-      console.error("[AUTH] Token retrieval failed:", err);
-      // For protected routes, fail if token can't be retrieved
-      throw new Error("Authentication required");
+      if (!token) {
+        console.error("[API] getToken() returned null - user may not be authenticated");
+        setAuthStatus('required');
+        throw new Error("Authentication required: No token available");
+      }
+      
+      console.log("[API] Token obtained, making authenticated request to:", url);
+      // Use the centralized authenticatedFetch from utils/api.ts
+      return await authenticatedFetch(url, options, token, timeoutMs);
+    } catch (err: any) {
+      console.error("[API] Request failed:", err?.message || err);
+      
+      // Set auth status on 401
+      if (err?.message?.includes('401') || err?.message?.includes('Authentication required')) {
+        setAuthStatus('required');
+      }
+      
+      throw err;
     }
   };
 
@@ -1003,35 +1031,51 @@ export default function Home() {
     mockMode: mockMode,
   });
 
-  // Check backend health periodically
+  // Check backend health periodically (with authentication)
   useEffect(() => {
     if (mockMode) {
       setBackendHealth('offline'); // Don't check when in mock mode
       return;
     }
 
+    // Don't check health until Clerk is loaded
+    if (!isLoaded) {
+      return;
+    }
+
+    // Don't check health if user is not signed in
+    if (!isSignedIn) {
+      setBackendHealth('offline');
+      setAuthStatus('required');
+      return;
+    }
+
     const checkHealth = async () => {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+        // Use authenticated fetch for health check
+        await apiFetch(`${API_BASE}/health`, { method: 'GET' }, 3000);
         
-        const response = await fetch(`${API_BASE}/health`, {
-          method: 'GET',
-          signal: controller.signal,
-        });
+        setBackendHealth('online');
+        setAuthStatus('authenticated');
         
-        clearTimeout(timeoutId);
-        const isOnline = response.ok;
-        setBackendHealth(isOnline ? 'online' : 'offline');
-        
-        // Disable mock mode when backend is online
-        if (isOnline && mockMode) {
-          console.log("[HEALTH] Backend is online, disabling mock mode");
+        // Disable mock mode when backend is online and authenticated
+        if (mockMode) {
+          console.log("[HEALTH] Backend is online and authenticated, disabling mock mode");
           setMockMode(false);
         }
-      } catch (err) {
-        console.error("[HEALTH] Backend health check failed:", err);
-        setBackendHealth('offline');
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        console.error("[HEALTH] Backend health check failed:", errorMessage);
+        
+        // Distinguish between auth errors and network errors
+        if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
+          setAuthStatus('required');
+          setBackendHealth('checking'); // Don't mark backend as offline on auth error
+        } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout')) {
+          setBackendHealth('offline');
+        } else {
+          setBackendHealth('offline');
+        }
       }
     };
 
@@ -1042,13 +1086,26 @@ export default function Home() {
     const interval = setInterval(checkHealth, 10000);
 
     return () => clearInterval(interval);
-  }, [API_BASE, mockMode]);
+  }, [API_BASE, mockMode, isLoaded, isSignedIn]);
 
+  // Fetch campaigns when Clerk is loaded and user is signed in
   useEffect(() => {
-    console.log("[DIAGNOSTIC] useEffect - Component mounted, calling fetchCampaigns");
+    if (!isLoaded) {
+      console.log("[DIAGNOSTIC] Clerk not loaded yet, waiting...");
+      return;
+    }
+
+    if (!isSignedIn) {
+      console.log("[DIAGNOSTIC] User not signed in, skipping fetchCampaigns");
+      setAuthStatus('required');
+      setCampaigns([]);
+      return;
+    }
+
+    console.log("[DIAGNOSTIC] Clerk loaded and user signed in, calling fetchCampaigns");
     fetchCampaigns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isLoaded, isSignedIn]);
 
   // Diagnostic: Log campaigns state changes
   useEffect(() => {
@@ -1080,7 +1137,7 @@ export default function Home() {
         return;
       }
       console.log("[FETCH] Calling GET /campaigns with auth token");
-      const data: any = await authenticatedFetch(`${API_BASE}/campaigns`);
+      const data: any = await apiFetch(`${API_BASE}/campaigns`);
       console.log("[FETCH] Response received:", JSON.stringify(data, null, 2));
       
       // Backend returns { campaigns: [...] }, so extract campaigns array
@@ -1093,6 +1150,9 @@ export default function Home() {
         console.log("[FETCH] Backend responded successfully, disabling mock mode");
         setMockMode(false);
       }
+      
+      // Update auth status on success
+      setAuthStatus('authenticated');
       
       // Handle empty results gracefully (user not logged in or no campaigns)
       setCampaigns(list);
@@ -1115,11 +1175,16 @@ export default function Home() {
         name: err?.name,
       });
       
-      // Only enable mock mode for network/connection errors, not auth errors
-      if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
-        setToast("Authentication failed. Please sign in again.");
+      // Handle errors: DO NOT activate mock mode on 401
+      if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
+        console.error("[FETCH] 401 Unauthorized - Authentication required");
+        setAuthStatus('required');
+        setToast("Authentication required. Please sign in.");
         setCampaigns([]);
-      } else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('network')) {
+        // DO NOT activate mock mode on 401
+      } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
+        // Only activate mock mode on actual network/connection errors
+        console.warn("[FETCH] Network error - Backend unreachable, activating mock mode");
         setToast("Backend unreachable — switching to Mock Mode. Check connection and retry.");
         setMockMode(true);
         setCampaigns([
@@ -1152,7 +1217,7 @@ export default function Home() {
         ]);
         return;
       }
-      const data: any = await authenticatedFetch(`${API_BASE}/campaigns/${c.id}/contacts`);
+      const data: any = await apiFetch(`${API_BASE}/campaigns/${c.id}/contacts`);
       const list = Array.isArray(data) ? data : data?.contacts || [];
       setContacts(list);
     } catch (err: any) {
@@ -1177,7 +1242,7 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const res = await authenticatedFetch(`${API_BASE}/call/start/${campaignContactId}`, { method: "POST" });
+      const res = await apiFetch(`${API_BASE}/call/start/${campaignContactId}`, { method: "POST" });
       setToast((res && (res as any).message) || "Call started — ringing the contact");
       if (selectedCampaign) openCampaign(selectedCampaign);
     } catch (err: any) {
@@ -1279,7 +1344,7 @@ export default function Home() {
         return;
       }
 
-      const res = await authenticatedFetch(`${API_BASE}/batch/start/${selectedCampaign.id}`, {
+      const res = await apiFetch(`${API_BASE}/batch/start/${selectedCampaign.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1388,7 +1453,7 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const res = await authenticatedFetch(`${API_BASE}/debug/apply-score`, {
+      const res = await apiFetch(`${API_BASE}/debug/apply-score`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ callLogId: activeCallLogId, transcript, durationSeconds }),
@@ -1492,6 +1557,17 @@ export default function Home() {
           <div className="flex items-center gap-2 sm:gap-4 text-xs overflow-x-auto">
             <div className="flex items-center gap-2">
               <span className="text-gray-600 font-medium">Status:</span>
+              {/* Auth Status */}
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${
+                  authStatus === 'authenticated' ? 'bg-green-500' :
+                  authStatus === 'required' ? 'bg-red-500' :
+                  'bg-yellow-500 animate-pulse'
+                }`}></span>
+                <span className="text-gray-700">
+                  Auth {authStatus === 'authenticated' ? 'OK' : authStatus === 'required' ? 'Required' : 'Checking...'}
+                </span>
+              </div>
               {/* Backend Health */}
               <div className="flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full ${
@@ -2222,7 +2298,7 @@ export default function Home() {
                 return;
               }
               const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
-              const res = await authenticatedFetch(`${API_BASE}/batch/pause/${batchJob.batchJobId}`, {
+              const res = await apiFetch(`${API_BASE}/batch/pause/${batchJob.batchJobId}`, {
                 method: 'POST',
               });
               if ((res as any).ok) {
@@ -2243,7 +2319,7 @@ export default function Home() {
                 return;
               }
               const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
-              const res = await authenticatedFetch(`${API_BASE}/batch/resume/${batchJob.batchJobId}`, {
+              const res = await apiFetch(`${API_BASE}/batch/resume/${batchJob.batchJobId}`, {
                 method: 'POST',
               });
               if ((res as any).ok) {
@@ -2264,7 +2340,7 @@ export default function Home() {
                 return;
               }
               const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
-              const res = await authenticatedFetch(`${API_BASE}/batch/stop/${batchJob.batchJobId}`, {
+              const res = await apiFetch(`${API_BASE}/batch/stop/${batchJob.batchJobId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cancelledBy: 'User' }),
@@ -2388,7 +2464,7 @@ export default function Home() {
                         const formData = new FormData();
                         formData.append('csv', csvFile);
 
-                        const res = await authenticatedFetch(`${API_BASE}/leads/upload-csv/${selectedCampaign.id}`, {
+                        const res = await apiFetch(`${API_BASE}/leads/upload-csv/${selectedCampaign.id}`, {
                           method: 'POST',
                           body: formData,
                           // Do NOT set Content-Type header - browser will set it with boundary
@@ -2912,7 +2988,7 @@ export default function Home() {
                                       const formData = new FormData();
                                       formData.append('audio', audioBlob);
 
-                                      const res = await authenticatedFetch(`${API_BASE}/campaigns/transcribe-audio`, {
+                                      const res = await apiFetch(`${API_BASE}/campaigns/transcribe-audio`, {
                                         method: 'POST',
                                         body: formData,
                                       });
@@ -2974,7 +3050,7 @@ export default function Home() {
                                       
                                       setIsGeneratingKnowledge(true);
                                       try {
-                                        const res = await authenticatedFetch(`${API_BASE}/campaigns/generate-knowledge`, {
+                                        const res = await apiFetch(`${API_BASE}/campaigns/generate-knowledge`, {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json' },
                                           body: JSON.stringify({
@@ -3131,7 +3207,7 @@ export default function Home() {
                         setIsCreatingCampaign(true);
                         setCampaignFormError(null);
                         try {
-                          const res = await authenticatedFetch(`${API_BASE}/campaigns`, {
+                          const res = await apiFetch(`${API_BASE}/campaigns`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -3306,10 +3382,8 @@ export default function Home() {
 
                       setIsAddingLead(true);
                       try {
-                        const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
-                        const res = await fetch(`${API_BASE}/leads/create`, {
+                        const res = await apiFetch(`${API_BASE}/leads/create`, {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
                             campaignId: selectedCampaign.id,
                             name: addLeadForm.name,
@@ -3318,18 +3392,21 @@ export default function Home() {
                           }),
                         });
 
-                        const data = await res.json();
-                        if (data.ok) {
+                        if (res.ok) {
                           setToast('Lead added successfully');
                           setShowAddLeadModal(false);
                           setAddLeadForm({ name: '', phone: '' });
                           // Lead will be added via SSE event LEAD_CREATED
                         } else {
-                          alert(data.error || 'Failed to add lead');
+                          alert(res.error || 'Failed to add lead');
                         }
-                      } catch (err) {
+                      } catch (err: any) {
                         console.error('Failed to add lead:', err);
-                        alert('Failed to add lead. Please check your connection.');
+                        if (err?.message?.includes('401') || err?.message?.includes('Authentication required')) {
+                          alert('Authentication required. Please sign in.');
+                        } else {
+                          alert('Failed to add lead. Please check your connection.');
+                        }
                       } finally {
                         setIsAddingLead(false);
                       }
