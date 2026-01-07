@@ -7,6 +7,7 @@ import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { prisma } from "./prisma";
 import clerk from '@clerk/clerk-sdk-node';
+import { clerkAuthMiddleware } from './middleware/clerkAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
 type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 import { determineLeadStatusFromTranscript, extractConversationMemory, decideScriptMode, decideObjectionStrategy, type ScriptMode as LeadScoringScriptMode, type ObjectionStrategy } from "./leadScoring";
@@ -97,12 +98,21 @@ app.use(cors({
       return callback(null, true);
     }
     
-    // If origin is defined, check against allowed origins
+    // Allow exact matches from allowedOrigins
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return;
     }
+    
+    // Allow Vercel preview deployments (any *.vercel.app subdomain)
+    if (origin.endsWith('.vercel.app')) {
+      callback(null, true);
+      return;
+    }
+    
+    // Log blocked origin for debugging
+    console.warn(`[CORS] Blocked origin: ${origin}. Allowed origins:`, allowedOrigins);
+    callback(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -114,15 +124,20 @@ app.use(cors({
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// Auth middleware - optional (graceful fallback)
-// Extends Request type with userId (optional, can be string or null)
+// Extend Express Request type to include auth
 declare global {
   namespace Express {
     interface Request {
-      userId?: string | null;
+      userId?: string | null; // For backward compatibility with old authMiddleware
+      auth?: {
+        userId: string;
+      };
     }
   }
 }
+
+// Apply Clerk auth middleware ONLY to /campaigns routes
+app.use('/campaigns', clerkAuthMiddleware);
 
 async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   // Skip auth middleware for /health endpoint
@@ -1860,17 +1875,19 @@ app.post("/debug/apply-score", async (req: Request, res: Response) => {
 // GET /campaigns
 app.get("/campaigns", async (req: Request, res: Response) => {
   try {
-    // If userId is null, return empty array (unauthenticated user)
-    if (req.userId === null || req.userId === undefined) {
+    // Get userId from Clerk auth middleware
+    const userId = req.auth?.userId;
+    
+    if (!userId) {
       console.log("[CAMPAIGNS] GET /campaigns - userId absent, returning empty array");
       return res.json({ campaigns: [] });
     }
     
-    console.log("[CAMPAIGNS] GET /campaigns - userId present:", req.userId);
+    console.log("[CAMPAIGNS] userId resolved:", userId);
     
     // Filter campaigns by userId
     const campaigns = await prisma.campaign.findMany({
-      where: { userId: req.userId },
+      where: { userId: userId },
       select: { id: true, name: true, propertyId: true },
       orderBy: { createdAt: "desc" },
     });

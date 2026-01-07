@@ -1,18 +1,21 @@
 // pages/analytics.tsx
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
+import { useAuth } from '@clerk/nextjs';
 import { AnalyticsDashboard } from '../components/AnalyticsDashboard';
+import { authenticatedFetch, getApiBaseUrl } from '../utils/api';
 
 type Campaign = { id: string; name: string; propertyId: string };
 
 export default function AnalyticsPage() {
   const router = useRouter();
   const { campaignId } = router.query;
+  const { getToken } = useAuth();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [mockMode, setMockMode] = useState<boolean>(false);
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
+  const API_BASE = getApiBaseUrl();
 
   // Load mock mode from localStorage
   useEffect(() => {
@@ -41,13 +44,17 @@ export default function AnalyticsPage() {
           return;
         }
 
-        const res = await fetch(`${API_BASE}/campaigns`);
-        const data = await res.json();
+        const token = await getToken();
+        const data = await authenticatedFetch(`${API_BASE}/campaigns`, undefined, token || null);
         const campaigns = Array.isArray(data) ? data : data?.campaigns || [];
         const foundCampaign = campaigns.find((c: Campaign) => c.id === campaignId);
         
         if (foundCampaign) {
           setCampaign(foundCampaign);
+          // Disable mock mode on successful backend response
+          if (mockMode) {
+            setMockMode(false);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch campaign:', err);
@@ -137,16 +144,14 @@ export default function AnalyticsPage() {
               <button
                 onClick={async () => {
                   try {
-                    const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                    const res = await fetch(`${API_BASE}/batch/start/${campaignId}`, {
+                    const token = await getToken();
+                    const data = await authenticatedFetch(`${API_BASE}/batch/start/${campaignId}`, {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         cooldownHours: 24,
                         maxRetries: 2,
                       }),
-                    });
-                    const data = await res.json();
+                    }, token || null);
                     if (data.ok) {
                       alert(`Batch call started: ${data.totalLeads} leads queued`);
                       // Refresh page to show updated status

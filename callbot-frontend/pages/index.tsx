@@ -268,7 +268,7 @@ export default function Home() {
     });
   };
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000";
 
   // Centralized fetch helper that automatically attaches auth token
   const authenticatedFetch = async (url: string, options?: RequestInit, timeoutMs = 8000) => {
@@ -1075,6 +1075,14 @@ export default function Home() {
       const list = Array.isArray(data) ? data : (data?.campaigns || []);
       console.log("[DIAGNOSTIC] fetchCampaigns - Parsed list:", JSON.stringify(list, null, 2));
       console.log("[DIAGNOSTIC] fetchCampaigns - List length:", list.length);
+      
+      // Disable mock mode on successful backend response
+      if (list.length > 0 || (data && !data.error)) {
+        if (mockMode) {
+          console.log("[DIAGNOSTIC] fetchCampaigns - Backend responded successfully, disabling mock mode");
+          setMockMode(false);
+        }
+      }
       
       // Handle empty results gracefully (user not logged in or no campaigns)
       setCampaigns(list);
@@ -2188,7 +2196,7 @@ export default function Home() {
                 setToast('(Mock) Batch paused');
                 return;
               }
-              const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
+              const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
               const res = await authenticatedFetch(`${API_BASE}/batch/pause/${batchJob.batchJobId}`, {
                 method: 'POST',
               });
@@ -2209,7 +2217,7 @@ export default function Home() {
                 setToast('(Mock) Batch resumed');
                 return;
               }
-              const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
+              const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
               const res = await authenticatedFetch(`${API_BASE}/batch/resume/${batchJob.batchJobId}`, {
                 method: 'POST',
               });
@@ -2230,7 +2238,7 @@ export default function Home() {
                 setToast('(Mock) Batch stopped');
                 return;
               }
-              const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
+              const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
               const res = await authenticatedFetch(`${API_BASE}/batch/stop/${batchJob.batchJobId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2352,11 +2360,10 @@ export default function Home() {
                       setCsvUploadProgress('Uploading CSV...');
 
                       try {
-                        const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
                         const formData = new FormData();
                         formData.append('csv', csvFile);
 
-                        const res = await fetch(`${API_BASE}/leads/upload-csv/${selectedCampaign.id}`, {
+                        const res = await authenticatedFetch(`${API_BASE}/leads/upload-csv/${selectedCampaign.id}`, {
                           method: 'POST',
                           body: formData,
                           // Do NOT set Content-Type header - browser will set it with boundary
@@ -2877,11 +2884,10 @@ export default function Home() {
                                     
                                     setIsTranscribing(true);
                                     try {
-                                      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
                                       const formData = new FormData();
                                       formData.append('audio', audioBlob);
 
-                                      const res = await fetch(`${API_BASE}/campaigns/transcribe-audio`, {
+                                      const res = await authenticatedFetch(`${API_BASE}/campaigns/transcribe-audio`, {
                                         method: 'POST',
                                         body: formData,
                                       });
@@ -2943,8 +2949,7 @@ export default function Home() {
                                       
                                       setIsGeneratingKnowledge(true);
                                       try {
-                                        const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                                        const res = await fetch(`${API_BASE}/campaigns/generate-knowledge`, {
+                                        const res = await authenticatedFetch(`${API_BASE}/campaigns/generate-knowledge`, {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json' },
                                           body: JSON.stringify({
@@ -3101,8 +3106,7 @@ export default function Home() {
                         setIsCreatingCampaign(true);
                         setCampaignFormError(null);
                         try {
-                          const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                          const res = await fetch(`${API_BASE}/campaigns`, {
+                          const res = await authenticatedFetch(`${API_BASE}/campaigns`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -3277,7 +3281,7 @@ export default function Home() {
 
                       setIsAddingLead(true);
                       try {
-                        const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
+                        const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
                         const res = await fetch(`${API_BASE}/leads/create`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },

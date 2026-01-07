@@ -1,8 +1,10 @@
 // components/LeadDrawer.tsx
 import React, { useEffect, useRef, useState } from 'react';
+import { useAuth } from '@clerk/nextjs';
 import { LeadStatusBadge } from './LeadStatusBadge';
 import { LeadTimelineEvent, type LeadStatus } from '../types/lead';
 import { getOutcomeBucketLabel, getRecommendedNextAction, getLastCallSummary } from '../utils/labelHelpers';
+import { authenticatedFetch, getApiBaseUrl } from '../utils/api';
 import type { CampaignContact } from '@/types/campaign';
 
 interface LeadDrawerProps {
@@ -36,8 +38,16 @@ export function LeadDrawer({
   isReconnecting = false,
   sseError = null,
 }: LeadDrawerProps) {
+  const { getToken } = useAuth();
+  const API_BASE = getApiBaseUrl();
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  
+  // Helper function for authenticated requests
+  const makeAuthenticatedRequest = async (url: string, options?: RequestInit) => {
+    const token = await getToken();
+    return await authenticatedFetch(url, options, token || null);
+  };
   const [timelineEvents, setTimelineEvents] = useState<LeadTimelineEvent[]>([]);
   const [displayLead, setDisplayLead] = useState<CampaignContact | null>(lead);
   const [newestEventId, setNewestEventId] = useState<string | null>(null);
@@ -571,13 +581,11 @@ export function LeadDrawer({
                           return;
                         }
                         try {
-                          const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                          const res = await fetch(`${API_BASE}/call/live/emergency/stop`, {
+                          const res = await makeAuthenticatedRequest(`${API_BASE}/call/live/emergency/stop`, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ callLogId: liveCallData.callLogId }),
                           });
-                          const data = await res.json();
+                          const data = res;
                           if (data.ok) {
                             setLiveCallData(null);
                             alert('Call stopped successfully');
@@ -600,13 +608,12 @@ export function LeadDrawer({
                           return;
                         }
                         try {
-                          const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                          const res = await fetch(`${API_BASE}/call/live/emergency/handoff`, {
+                          const res = await makeAuthenticatedRequest(`${API_BASE}/call/live/emergency/handoff`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ callLogId: liveCallData.callLogId }),
                           });
-                          const data = await res.json();
+                          const data = res;
                           if (data.ok) {
                             alert('Human handoff requested successfully');
                           } else {
@@ -929,8 +936,7 @@ export function LeadDrawer({
                             return;
                           }
                           try {
-                            const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                            const res = await fetch(`${API_BASE}/leads/${displayLead.id}/convert`, {
+                            const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/convert`, {
                               method: 'POST',
                             });
                             const data = await res.json();
@@ -999,8 +1005,7 @@ export function LeadDrawer({
                                     return;
                                   }
                                   try {
-                                    const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                                    const res = await fetch(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                    const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                       method: 'POST',
                                       headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
@@ -1038,8 +1043,7 @@ export function LeadDrawer({
                                     return;
                                   }
                                   try {
-                                    const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                                    const res = await fetch(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                    const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                       method: 'POST',
                                       headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
@@ -1077,8 +1081,7 @@ export function LeadDrawer({
                                     return;
                                   }
                                   try {
-                                    const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                                    const res = await fetch(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                    const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                       method: 'POST',
                                       headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
@@ -1120,8 +1123,7 @@ export function LeadDrawer({
                                     return;
                                   }
                                   try {
-                                    const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                                    const res = await fetch(`${API_BASE}/leads/${displayLead.id}/override`, {
+                                    const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                       method: 'POST',
                                       headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({
@@ -1370,8 +1372,7 @@ export function LeadDrawer({
                                 return;
                               }
                               try {
-                                const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                                const res = await fetch(`${API_BASE}/leads/${displayLead.id}/override`, {
+                              const res = await makeAuthenticatedRequest(`${API_BASE}/leads/${displayLead.id}/override`, {
                                   method: 'DELETE',
                                 });
                                 const data = await res.json();
@@ -1717,7 +1718,7 @@ export function LeadDrawer({
                                       }
                                       try {
                                         const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
-                                        const res = await fetch(`${API_BASE}/call/${event.callLogId}/review`);
+                                        const res = await makeAuthenticatedRequest(`${API_BASE}/call/${event.callLogId}/review`);
                                         const data = await res.json();
                                         if (data.ok && data.selfReview) {
                                           setCallReview(data.selfReview);

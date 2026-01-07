@@ -15,6 +15,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@clerk/backend": "^2.29.0",
     "@clerk/clerk-sdk-node": "^4.13.23",
     "@prisma/adapter-pg": "^7.2.0",
     "@prisma/client": "^7.1.0",
