@@ -97,9 +97,6 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-// Explicitly handle preflight requests for all routes
-app.options('*', cors());
-
 // Health check route - ZERO dependencies (must be AFTER CORS middleware)
 // Must NOT use Prisma, auth, env vars, or throw errors
 // Must work even with NO Origin header (CORS bypass)
