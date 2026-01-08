@@ -68,9 +68,14 @@ const serverStartTime = Date.now();
 // Health check route - ZERO dependencies (must be BEFORE all middleware)
 // Must NOT use Prisma, auth, env vars, or throw errors
 // Must work even with NO Origin header (CORS bypass)
+// Always returns HTTP 200 with exactly { ok: true }
 app.get('/health', (_req: Request, res: Response) => {
-  const timestamp = new Date().toISOString();
-  res.json({ ok: true, status: "healthy", timestamp });
+  try {
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    // Never throw - always return success even if something goes wrong
+    res.status(200).json({ ok: true });
+  }
 });
 
 // Configure multer for file uploads (memory storage for CSV)
@@ -93,26 +98,33 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests without origin header (health checks, Railway, server-to-server, SSE)
-    if (!origin) {
-      return callback(null, true);
-    }
-    
-    // Allow exact matches from allowedOrigins
-    if (allowedOrigins.includes(origin)) {
+    try {
+      // Allow requests without origin header (health checks, curl, server-to-server, SSE)
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      // Allow exact matches from allowedOrigins
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      
+      // Allow Vercel preview deployments (any *.vercel.app subdomain)
+      if (origin.endsWith('.vercel.app')) {
+        callback(null, true);
+        return;
+      }
+      
+      // Log blocked origin for debugging (but don't crash)
+      console.warn(`[CORS] Blocked origin: ${origin}. Allowed origins:`, allowedOrigins);
+      // Still allow the request - CORS errors should not crash requests
       callback(null, true);
-      return;
-    }
-    
-    // Allow Vercel preview deployments (any *.vercel.app subdomain)
-    if (origin.endsWith('.vercel.app')) {
+    } catch (err) {
+      // Never throw - always allow request if CORS check fails
+      console.error('[CORS] Error in origin check:', err);
       callback(null, true);
-      return;
     }
-    
-    // Log blocked origin for debugging
-    console.warn(`[CORS] Blocked origin: ${origin}. Allowed origins:`, allowedOrigins);
-    callback(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

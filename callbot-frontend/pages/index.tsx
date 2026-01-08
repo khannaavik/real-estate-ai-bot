@@ -1033,48 +1033,70 @@ export default function Home() {
     mockMode: mockMode,
   });
 
-  // Check backend health periodically (with authentication)
+  // Track previous backend status for logging
+  const previousBackendStatusRef = useRef<'checking' | 'online' | 'offline'>('checking');
+
+  // Check backend health periodically (NO authentication required)
   useEffect(() => {
-    if (mockMode) {
-      setBackendHealth('offline'); // Don't check when in mock mode
-      return;
-    }
-
-    // Don't check health until Clerk is loaded
-    if (!isLoaded) {
-      return;
-    }
-
-    // Don't check health if user is not signed in
-    if (!isSignedIn) {
-      setBackendHealth('offline');
-      setAuthStatus('required');
-      return;
-    }
+    // Health check runs independently of mock mode, auth status, or Clerk loading
+    // It only checks if the backend server is reachable
 
     const checkHealth = async () => {
       try {
-        // Use authenticated fetch for health check
-        await apiFetch(`${API_BASE}/health`, { method: 'GET' }, 3000);
-        
-        setBackendHealth('online');
-        setAuthStatus('authenticated');
-        
-        // Disable mock mode immediately when backend is online and authenticated
-        setMockMode(false);
-        console.log("[HEALTH] Backend is online and authenticated, mock mode disabled");
+        // Use plain fetch - NO auth token, NO Clerk dependency
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+        const response = await fetch(`${API_BASE}/health`, {
+          method: 'GET',
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        // Only check response.ok - backend is online if /health returns 200
+        if (response.ok) {
+          const previousStatus = previousBackendStatusRef.current;
+          if (previousStatus !== 'online') {
+            console.log("[HEALTH] Backend is now ONLINE");
+          }
+          previousBackendStatusRef.current = 'online';
+          setBackendHealth('online');
+          
+          // Disable mock mode when backend is online
+          if (mockMode) {
+            setMockMode(false);
+            console.log("[HEALTH] Backend online, mock mode disabled");
+          }
+        } else {
+          // Non-200 response - treat as offline
+          const previousStatus = previousBackendStatusRef.current;
+          if (previousStatus !== 'offline') {
+            console.log("[HEALTH] Backend is now OFFLINE (non-200 response)");
+          }
+          previousBackendStatusRef.current = 'offline';
+          setBackendHealth('offline');
+        }
       } catch (err: any) {
+        // Network error, timeout, or no response - backend is offline
         const errorMessage = err?.message || String(err);
-        console.error("[HEALTH] Backend health check failed:", errorMessage);
-        
-        // Distinguish between auth errors and network errors
-        if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
-          setAuthStatus('required');
-          setBackendHealth('checking'); // Don't mark backend as offline on auth error
-        } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout')) {
+        const isNetworkError = 
+          err.name === 'AbortError' || 
+          errorMessage.includes('timeout') ||
+          errorMessage.includes('Failed to fetch') ||
+          errorMessage.includes('Network error') ||
+          errorMessage.includes('network');
+
+        if (isNetworkError) {
+          const previousStatus = previousBackendStatusRef.current;
+          if (previousStatus !== 'offline') {
+            console.log("[HEALTH] Backend is now OFFLINE (network error)");
+          }
+          previousBackendStatusRef.current = 'offline';
           setBackendHealth('offline');
         } else {
-          setBackendHealth('offline');
+          // Unexpected error - log but don't mark as offline
+          console.error("[HEALTH] Unexpected error:", errorMessage);
         }
       }
     };
@@ -1086,7 +1108,7 @@ export default function Home() {
     const interval = setInterval(checkHealth, 10000);
 
     return () => clearInterval(interval);
-  }, [API_BASE, mockMode, isLoaded, isSignedIn]);
+  }, [API_BASE, mockMode]);
 
   // Auth gating: Redirect to sign-in if not signed in (after Clerk loads)
   useEffect(() => {
@@ -1238,10 +1260,24 @@ export default function Home() {
       const list = Array.isArray(data) ? data : data?.contacts || [];
       setContacts(list);
     } catch (err: any) {
-      console.error("openCampaign error:", err?.message || err);
-      setToast("Failed to load contacts. If backend is offline, enable Mock Mode.");
-      setContacts([]);
-      setMockMode(true); // This will also save to localStorage via our wrapper
+      const errorMessage = err?.message || String(err);
+      console.error("openCampaign error:", errorMessage);
+      
+      // Separate auth errors from network errors
+      if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
+        setAuthStatus('required');
+        setToast("Authentication required. Please sign in.");
+        setContacts([]);
+        // DO NOT enable mock mode on auth errors
+      } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
+        // Only enable mock mode on network errors
+        setToast("Backend unreachable — switching to Mock Mode.");
+        setContacts([]);
+        setMockMode(true);
+      } else {
+        setToast(`Failed to load contacts: ${errorMessage}`);
+        setContacts([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -1263,9 +1299,21 @@ export default function Home() {
       setToast((res && (res as any).message) || "Call started — ringing the contact");
       if (selectedCampaign) openCampaign(selectedCampaign);
     } catch (err: any) {
-      console.error("startCall error:", err?.message || err);
-      setToast("Failed to start call; enabling Mock Mode. See console for details.");
-      setMockMode(true);
+      const errorMessage = err?.message || String(err);
+      console.error("startCall error:", errorMessage);
+      
+      // Separate auth errors from network errors
+      if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
+        setAuthStatus('required');
+        setToast("Authentication required. Please sign in.");
+        // DO NOT enable mock mode on auth errors
+      } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
+        // Only enable mock mode on network errors
+        setToast("Backend unreachable — switching to Mock Mode.");
+        setMockMode(true);
+      } else {
+        setToast(`Failed to start call: ${errorMessage}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -1480,9 +1528,21 @@ export default function Home() {
       setShowScoreModal(false);
       if (selectedCampaign) openCampaign(selectedCampaign);
     } catch (err: any) {
-      console.error("applyScore error:", err?.message || err);
-      setToast("Failed to apply score. If backend is offline, turn on Mock Mode.");
-      setMockMode(true); // This will also save to localStorage via our wrapper
+      const errorMessage = err?.message || String(err);
+      console.error("applyScore error:", errorMessage);
+      
+      // Separate auth errors from network errors
+      if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
+        setAuthStatus('required');
+        setToast("Authentication required. Please sign in.");
+        // DO NOT enable mock mode on auth errors
+      } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
+        // Only enable mock mode on network errors
+        setToast("Backend unreachable — switching to Mock Mode.");
+        setMockMode(true);
+      } else {
+        setToast(`Failed to apply score: ${errorMessage}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -1637,6 +1697,33 @@ export default function Home() {
           </div>
         </div>
       </header>
+
+      {/* Auth Required Banner */}
+      {isLoaded && authStatus === 'required' && backendHealth === 'online' && (
+        <div className="bg-blue-50 border-b border-blue-200 px-4 sm:px-6 py-3">
+          <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-blue-700 font-medium text-sm">Sign in to continue</span>
+            </div>
+            <SignInButton mode="modal">
+              <button className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors">
+                Sign In
+              </button>
+            </SignInButton>
+          </div>
+        </div>
+      )}
+
+      {/* Backend Offline Banner */}
+      {backendHealth === 'offline' && (
+        <div className="bg-red-50 border-b border-red-200 px-4 sm:px-6 py-3">
+          <div className="max-w-[1440px] mx-auto">
+            <div className="flex items-center gap-2">
+              <span className="text-red-700 font-medium text-sm">Backend is offline. Mock Mode is enabled.</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* STEP 21: Full-width responsive layout */}
       <div className="w-full flex relative">
