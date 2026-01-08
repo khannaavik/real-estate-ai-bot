@@ -1036,7 +1036,11 @@ export default function Home() {
   // Track previous backend status for logging
   const previousBackendStatusRef = useRef<'checking' | 'online' | 'offline'>('checking');
 
-  // Check backend health periodically (NO authentication required)
+  // CRITICAL: Backend health check - ONLY /health response controls backendHealth
+  // - Uses plain fetch (NO auth token, NO Clerk dependency)
+  // - ONLY sets backendHealth based on /health response
+  // - Auth errors (401) from other endpoints NEVER affect backendHealth
+  // - Network errors/timeouts set backendHealth to 'offline'
   useEffect(() => {
     // Health check runs independently of mock mode, auth status, or Clerk loading
     // It only checks if the backend server is reachable
@@ -1054,7 +1058,8 @@ export default function Home() {
 
         clearTimeout(timeoutId);
 
-        // Only check response.ok - backend is online if /health returns 200
+        // ONLY /health response.ok controls backendHealth
+        // HTTP 200 from /health = Backend Online (unconditionally)
         if (response.ok) {
           const previousStatus = previousBackendStatusRef.current;
           if (previousStatus !== 'online') {
@@ -1213,14 +1218,15 @@ export default function Home() {
         name: err?.name,
       });
       
-      // Handle errors: DO NOT activate mock mode on 401
+      // CRITICAL: 401 errors NEVER mark backend offline, NEVER enable mock mode
+      // Backend health is ONLY controlled by /health endpoint response
       if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
         console.error("[FETCH] 401 Unauthorized - Authentication required");
         setAuthStatus('required');
         setToast("Authentication required. Please sign in.");
         setCampaigns([]);
-        // DO NOT activate mock mode on 401 - redirect will handle this
-        // Don't show backend offline error for auth issues
+        // DO NOT set backendHealth - it's controlled ONLY by /health endpoint
+        // DO NOT activate mock mode on 401 - auth errors are separate from network errors
       } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
         // Only activate mock mode on actual network/connection errors
         console.warn("[FETCH] Network error - Backend unreachable, activating mock mode");
@@ -1698,18 +1704,26 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Auth Required Banner */}
-      {isLoaded && authStatus === 'required' && backendHealth === 'online' && (
+      {/* Auth Required Banner - Show when auth is required, regardless of backend status */}
+      {isLoaded && authStatus === 'required' && (
         <div className="bg-blue-50 border-b border-blue-200 px-4 sm:px-6 py-3">
           <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <span className="text-blue-700 font-medium text-sm">Sign in to continue</span>
+              <span className="text-blue-700 font-medium text-sm">Sign in to load campaigns</span>
             </div>
-            <SignInButton mode="modal">
-              <button className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors">
-                Sign In
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => router.push('/sign-in')}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+              >
+                Go to Sign In
               </button>
-            </SignInButton>
+              <SignInButton mode="modal">
+                <button className="px-4 py-2 text-sm font-medium text-blue-700 bg-white border border-blue-300 rounded-md hover:bg-blue-50 transition-colors">
+                  Sign In (Modal)
+                </button>
+              </SignInButton>
+            </div>
           </div>
         </div>
       )}
