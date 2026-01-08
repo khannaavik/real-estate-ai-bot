@@ -1,6 +1,6 @@
-﻿// pages/index.tsx
+// pages/index.tsx
 import React, { useEffect, useState, useRef } from "react";
-import { useAuth, SignInButton } from "@clerk/nextjs";
+import { useAuth, SignInButton, UserButton } from "@clerk/nextjs";
 import { useRouter } from "next/router";
 import { getApiBaseUrl, authenticatedFetch } from "../utils/api";
 import { useLiveEvents, type SSEEvent } from "../hooks/useLiveEvents";
@@ -1631,6 +1631,9 @@ export default function Home() {
                 <span className="hidden sm:inline">Refresh</span>
                 <span className="sm:hidden">↻</span>
               </button>
+              {isLoaded && isSignedIn && (
+                <UserButton afterSignOutUrl="/sign-in" />
+              )}
             </div>
           </div>
         </div>
@@ -3372,19 +3375,8 @@ export default function Home() {
 
                           const data = await res.json();
                           if (data.ok && data.campaign) {
-                            // Add campaign to list
-                            const newCampaign: Campaign = {
-                              id: data.campaign.id,
-                              name: data.campaign.name,
-                              propertyId: data.campaign.propertyId || '',
-                            };
-                            setCampaigns((prev) => [newCampaign, ...prev]);
-                            
-                            // Auto-select the newly created campaign
-                            setSelectedCampaign(newCampaign);
-                            
-                            // Clear contacts (new campaign has no leads yet)
-                            setContacts([]);
+                            // Refresh campaigns from backend (source of truth)
+                            await fetchCampaigns();
                             
                             // Close modal and reset wizard
                             setShowNewCampaignModal(false);

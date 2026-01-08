@@ -2235,18 +2235,15 @@ app.post("/campaigns", async (req: Request, res: Response) => {
       }
     }
 
-    // Get first user (for now, we'll use the first user in the system)
-    // In production, this would come from authentication
-    const firstUser = await prisma.user.findFirst({
-      orderBy: { createdAt: 'asc' },
-    });
-
-    if (!firstUser) {
-      return res.status(400).json({
+    // Extract userId from Clerk middleware
+    if (!req.auth?.userId) {
+      return res.status(401).json({
         ok: false,
-        error: "No user found. Please create a user first.",
+        error: 'Unauthorized',
       });
     }
+
+    const userId = req.auth.userId;
 
     // Validate propertyId if provided
     if (propertyId) {
@@ -2266,7 +2263,7 @@ app.post("/campaigns", async (req: Request, res: Response) => {
     const campaign = await prisma.campaign.create({
       data: {
         name: name.trim(),
-        userId: firstUser.id,
+        userId: userId,
         propertyId: propertyId || null,
         callerIdentityMode: identityMode,
         callerDisplayName: identityMode === 'PERSONALIZED' ? callerDisplayName?.trim() || null : null,
@@ -2282,6 +2279,8 @@ app.post("/campaigns", async (req: Request, res: Response) => {
         propertyId: true,
       },
     }) as any;
+
+    console.log('[CAMPAIGN CREATED]', campaign.id, 'user:', userId);
 
     // Emit SSE event
     const campaignCreatedEvent: SSEEvent = {
