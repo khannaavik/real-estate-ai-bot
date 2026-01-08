@@ -65,7 +65,42 @@ const app = express();
 // Server start time for uptime calculation (zero-dependency)
 const serverStartTime = Date.now();
 
-// Health check route - ZERO dependencies (must be BEFORE all middleware)
+// CORS configuration - MUST be applied BEFORE all routes including /health
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:4000',
+  'https://real-estate-ai-bot-2424.vercel.app',
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server, curl, Railway health checks (no origin header)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Allow all Vercel preview deployments
+    if (origin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+
+    // Allow exact matches from allowedOrigins
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // IMPORTANT: do NOT throw - reject invalid origins safely
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+// Explicitly handle preflight requests for all routes
+app.options('*', cors());
+
+// Health check route - ZERO dependencies (must be AFTER CORS middleware)
 // Must NOT use Prisma, auth, env vars, or throw errors
 // Must work even with NO Origin header (CORS bypass)
 // Always returns HTTP 200 with exactly { ok: true }
@@ -86,50 +121,6 @@ const upload = multer({
     fileSize: 5 * 1024 * 1024, // 5MB limit
   },
 });
-
-// Middleware - CORS configuration
-// Must be applied BEFORE routes
-const allowedOrigins = [
-  'http://localhost:3000',
-  'https://real-estate-ai-bot-2424.vercel.app',
-  'http://localhost:5173',
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
-];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    try {
-      // Allow requests without origin header (health checks, curl, server-to-server, SSE)
-      if (!origin) {
-        return callback(null, true);
-      }
-      
-      // Allow exact matches from allowedOrigins
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-      
-      // Allow Vercel preview deployments (any *.vercel.app subdomain)
-      if (origin.endsWith('.vercel.app')) {
-        callback(null, true);
-        return;
-      }
-      
-      // Log blocked origin for debugging (but don't crash)
-      console.warn(`[CORS] Blocked origin: ${origin}. Allowed origins:`, allowedOrigins);
-      // Still allow the request - CORS errors should not crash requests
-      callback(null, true);
-    } catch (err) {
-      // Never throw - always allow request if CORS check fails
-      console.error('[CORS] Error in origin check:', err);
-      callback(null, true);
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
 
 // Body parser middleware (for JSON/form-urlencoded)
 // Note: multer handles multipart/form-data, so this won't interfere
