@@ -2243,11 +2243,50 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
       });
     }
 
-    const userId = req.auth.userId;
+    const clerkUserId = req.auth.userId;
     
     // Temporary log: userId and payload
-    console.log('[POST /api/campaigns] userId:', userId);
+    console.log('[POST /api/campaigns] Clerk userId:', clerkUserId);
     console.log('[POST /api/campaigns] payload:', JSON.stringify(req.body, null, 2));
+
+    // Get email from Clerk token to upsert User
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Unauthorized',
+      });
+    }
+
+    const token = authHeader.substring(7);
+    const sessionClaims = await clerk.verifyToken(token);
+    const clerkEmail = (sessionClaims as any).email_addresses?.[0]?.email_address || (sessionClaims as any).email;
+
+    if (!clerkEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Email not found in Clerk session',
+      });
+    }
+
+    // Upsert User using Clerk userId to ensure FK integrity
+    // This ensures the User exists before creating the campaign (prevents P2003 foreign key errors)
+    // Note: Even though schema has @default(cuid()), explicitly providing id should override the default
+    const dbUser = await prisma.user.upsert({
+      where: { id: clerkUserId },
+      update: {
+        // Update email if it changed (though it shouldn't)
+        email: clerkEmail,
+      },
+      create: {
+        id: clerkUserId, // Use Clerk userId as database User id
+        email: clerkEmail,
+      },
+    });
+
+    console.log('[POST /api/campaigns] User upserted - id:', dbUser.id, 'email:', dbUser.email);
+    
+    const userId = dbUser.id; // Use the upserted User id
 
     // Validate propertyId if provided
     if (propertyId) {
@@ -2284,7 +2323,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
       },
     }) as any;
 
-    console.log('[CAMPAIGN CREATED]', campaign.id, 'user:', userId);
+    console.log('[POST /api/campaigns] Campaign created successfully:', campaign.id, 'user:', userId);
 
     // Emit SSE event
     const campaignCreatedEvent: SSEEvent = {
