@@ -1181,8 +1181,8 @@ export default function Home() {
         ]);
         return;
       }
-      console.log("[FETCH] Calling GET /campaigns with auth token");
-      const data: any = await apiFetch(`${API_BASE}/campaigns`);
+      console.log("[FETCH] Calling GET /api/campaigns with auth token");
+      const data: any = await apiFetch(`${API_BASE}/api/campaigns`);
       console.log("[FETCH] Response received:", JSON.stringify(data, null, 2));
       
       // Backend returns { campaigns: [...] }, so extract campaigns array
@@ -1262,7 +1262,7 @@ export default function Home() {
         ]);
         return;
       }
-      const data: any = await apiFetch(`${API_BASE}/campaigns/${c.id}/contacts`);
+      const data: any = await apiFetch(`${API_BASE}/api/campaigns/${c.id}/contacts`);
       const list = Array.isArray(data) ? data : data?.contacts || [];
       setContacts(list);
     } catch (err: any) {
@@ -3117,7 +3117,7 @@ export default function Home() {
                                       const formData = new FormData();
                                       formData.append('audio', audioBlob);
 
-                                      const res = await apiFetch(`${API_BASE}/campaigns/transcribe-audio`, {
+                                      const res = await apiFetch(`${API_BASE}/api/campaigns/transcribe-audio`, {
                                         method: 'POST',
                                         body: formData,
                                       });
@@ -3179,7 +3179,7 @@ export default function Home() {
                                       
                                       setIsGeneratingKnowledge(true);
                                       try {
-                                        const res = await apiFetch(`${API_BASE}/campaigns/generate-knowledge`, {
+                                        const res = await apiFetch(`${API_BASE}/api/campaigns/generate-knowledge`, {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json' },
                                           body: JSON.stringify({
@@ -3336,49 +3336,56 @@ export default function Home() {
                         setIsCreatingCampaign(true);
                         setCampaignFormError(null);
                         try {
-                          const res = await apiFetch(`${API_BASE}/campaigns`, {
+                          const payload = {
+                            name: newCampaignForm.name.trim(),
+                            propertyId: newCampaignForm.propertyId || null,
+                            callerIdentityMode: newCampaignForm.callerIdentityMode,
+                            callerDisplayName: newCampaignForm.callerIdentityMode === 'PERSONALIZED' 
+                              ? newCampaignForm.callerDisplayName.trim() 
+                              : null,
+                            campaignKnowledge: knowledgeSource === 'MANUAL' ? (() => {
+                              const knowledge = newCampaignForm.campaignKnowledge;
+                              const hasAnyValue = knowledge.priceRange || 
+                                knowledge.location || 
+                                knowledge.possession || 
+                                knowledge.amenities.length > 0 || 
+                                knowledge.highlights.length > 0;
+                              
+                              if (!hasAnyValue) {
+                                return null;
+                              }
+                              
+                              return {
+                                ...(knowledge.priceRange && { priceRange: knowledge.priceRange }),
+                                ...(knowledge.location && { location: knowledge.location }),
+                                ...(knowledge.possession && { possession: knowledge.possession }),
+                                ...(knowledge.amenities.length > 0 && { amenities: knowledge.amenities }),
+                                ...(knowledge.highlights.length > 0 && { highlights: knowledge.highlights }),
+                              };
+                            })() : null,
+                            voiceTranscript: knowledgeSource === 'VOICE' ? (newCampaignForm.voiceTranscript || null) : null,
+                            voiceTranscriptLanguage: knowledgeSource === 'VOICE' ? (newCampaignForm.voiceTranscriptLanguage || null) : null,
+                            voiceKnowledge: knowledgeSource === 'VOICE' ? (newCampaignForm.voiceKnowledge || null) : null,
+                            knowledgeUsageMode: newCampaignForm.knowledgeUsageMode,
+                          };
+
+                          // Temporary log: API response
+                          console.log('[POST /api/campaigns] Request payload:', JSON.stringify(payload, null, 2));
+                          
+                          const data = await apiFetch(`${API_BASE}/api/campaigns`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              name: newCampaignForm.name.trim(),
-                              propertyId: newCampaignForm.propertyId || null,
-                              callerIdentityMode: newCampaignForm.callerIdentityMode,
-                              callerDisplayName: newCampaignForm.callerIdentityMode === 'PERSONALIZED' 
-                                ? newCampaignForm.callerDisplayName.trim() 
-                                : null,
-                              campaignKnowledge: knowledgeSource === 'MANUAL' ? (() => {
-                                const knowledge = newCampaignForm.campaignKnowledge;
-                                const hasAnyValue = knowledge.priceRange || 
-                                  knowledge.location || 
-                                  knowledge.possession || 
-                                  knowledge.amenities.length > 0 || 
-                                  knowledge.highlights.length > 0;
-                                
-                                if (!hasAnyValue) {
-                                  return null;
-                                }
-                                
-                                return {
-                                  ...(knowledge.priceRange && { priceRange: knowledge.priceRange }),
-                                  ...(knowledge.location && { location: knowledge.location }),
-                                  ...(knowledge.possession && { possession: knowledge.possession }),
-                                  ...(knowledge.amenities.length > 0 && { amenities: knowledge.amenities }),
-                                  ...(knowledge.highlights.length > 0 && { highlights: knowledge.highlights }),
-                                };
-                              })() : null,
-                              voiceTranscript: knowledgeSource === 'VOICE' ? (newCampaignForm.voiceTranscript || null) : null,
-                              voiceTranscriptLanguage: knowledgeSource === 'VOICE' ? (newCampaignForm.voiceTranscriptLanguage || null) : null,
-                              voiceKnowledge: knowledgeSource === 'VOICE' ? (newCampaignForm.voiceKnowledge || null) : null,
-                              knowledgeUsageMode: newCampaignForm.knowledgeUsageMode,
-                            }),
+                            body: JSON.stringify(payload),
                           });
 
-                          const data = await res.json();
+                          // Temporary log: API response
+                          console.log('[POST /api/campaigns] Response:', JSON.stringify(data, null, 2));
+
                           if (data.ok && data.campaign) {
                             // Refresh campaigns from backend (source of truth)
                             await fetchCampaigns();
                             
-                            // Close modal and reset wizard
+                            // Close modal and reset wizard ONLY after successful backend response
                             setShowNewCampaignModal(false);
                             setWizardStep(1);
                             setKnowledgeSource(null);
@@ -3409,11 +3416,14 @@ export default function Home() {
                             
                             setToast('Campaign created successfully');
                           } else {
+                            // On failure, show error and keep modal open
                             setCampaignFormError(data.error || 'Failed to create campaign');
                           }
-                        } catch (err) {
-                          console.error('Failed to create campaign:', err);
-                          setCampaignFormError('Failed to create campaign. Please check your connection.');
+                        } catch (err: any) {
+                          console.error('[POST /api/campaigns] Error:', err);
+                          // On failure, show error and keep modal open
+                          const errorMessage = err?.message || 'Failed to create campaign. Please check your connection.';
+                          setCampaignFormError(errorMessage);
                         } finally {
                           setIsCreatingCampaign(false);
                         }

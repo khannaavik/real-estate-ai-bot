@@ -62,7 +62,7 @@ export default function AnalyticsPage() {
           return;
         }
 
-        const data = await authenticatedFetch(`${API_BASE}/campaigns`, undefined, token);
+        const data = await authenticatedFetch(`${API_BASE}/api/campaigns`, undefined, token);
         const campaigns = Array.isArray(data) ? data : data?.campaigns || [];
         const foundCampaign = campaigns.find((c: Campaign) => c.id === campaignId);
         

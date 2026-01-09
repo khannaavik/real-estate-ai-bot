@@ -136,8 +136,8 @@ declare global {
   }
 }
 
-// Apply Clerk auth middleware ONLY to /campaigns routes
-app.use('/campaigns', clerkAuthMiddleware);
+// Apply Clerk auth middleware ONLY to /api/campaigns routes
+app.use('/api/campaigns', clerkAuthMiddleware);
 
 async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   // Skip auth middleware for /health endpoint
@@ -1872,15 +1872,15 @@ app.post("/debug/apply-score", async (req: Request, res: Response) => {
     });
   }
 });
-// GET /campaigns
-app.get("/campaigns", async (req: Request, res: Response) => {
+// GET /api/campaigns
+app.get("/api/campaigns", async (req: Request, res: Response) => {
   try {
     // Get userId from Clerk auth middleware (should always be present if middleware passed)
     const userId = req.auth?.userId;
     
     if (!userId) {
       // This should never happen if middleware is working correctly
-      console.error("[CAMPAIGNS] ✗ GET /campaigns - userId missing, auth middleware may have failed");
+      console.error("[CAMPAIGNS] ✗ GET /api/campaigns - userId missing, auth middleware may have failed");
       return res.status(401).json({ 
         ok: false, 
         error: 'Unauthorized',
@@ -1888,7 +1888,7 @@ app.get("/campaigns", async (req: Request, res: Response) => {
       });
     }
     
-    console.log("[CAMPAIGNS] ✓ GET /campaigns - userId:", userId);
+    console.log("[CAMPAIGNS] ✓ GET /api/campaigns - userId:", userId);
     
     // Filter campaigns by userId
     const campaigns = await prisma.campaign.findMany({
@@ -1950,8 +1950,8 @@ app.get("/campaigns", async (req: Request, res: Response) => {
   }
 });
 
-// POST /campaigns/transcribe-audio - Transcribe audio file
-app.post("/campaigns/transcribe-audio", upload.single('audio'), async (req: Request, res: Response) => {
+// POST /api/campaigns/transcribe-audio - Transcribe audio file
+app.post("/api/campaigns/transcribe-audio", upload.single('audio'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -1983,8 +1983,8 @@ app.post("/campaigns/transcribe-audio", upload.single('audio'), async (req: Requ
   }
 });
 
-// POST /campaigns/generate-knowledge - Generate structured knowledge from transcript
-app.post("/campaigns/generate-knowledge", async (req: Request, res: Response) => {
+// POST /api/campaigns/generate-knowledge - Generate structured knowledge from transcript
+app.post("/api/campaigns/generate-knowledge", async (req: Request, res: Response) => {
   try {
     const { transcript } = req.body as {
       transcript: string;
@@ -2045,8 +2045,8 @@ app.post("/campaigns/generate-knowledge", async (req: Request, res: Response) =>
   }
 });
 
-// POST /campaigns - Create new campaign
-app.post("/campaigns", async (req: Request, res: Response) => {
+// POST /api/campaigns - Create new campaign
+app.post("/api/campaigns", async (req: Request, res: Response) => {
   try {
     const { 
       name, 
@@ -2244,6 +2244,10 @@ app.post("/campaigns", async (req: Request, res: Response) => {
     }
 
     const userId = req.auth.userId;
+    
+    // Temporary log: userId and payload
+    console.log('[POST /api/campaigns] userId:', userId);
+    console.log('[POST /api/campaigns] payload:', JSON.stringify(req.body, null, 2));
 
     // Validate propertyId if provided
     if (propertyId) {
@@ -2299,7 +2303,7 @@ app.post("/campaigns", async (req: Request, res: Response) => {
     
     eventBus.emit('event', campaignCreatedEvent);
 
-    res.json({
+    res.status(201).json({
       ok: true,
       campaign: {
         id: campaign.id,
@@ -2789,8 +2793,8 @@ app.get("/learning/patterns/:campaignId", async (req: Request, res: Response) =>
   }
 });
 
-// GET /campaigns/:id/contacts
-app.get("/campaigns/:id/contacts", async (req: Request, res: Response) => {
+// GET /api/campaigns/:id/contacts
+app.get("/api/campaigns/:id/contacts", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     
