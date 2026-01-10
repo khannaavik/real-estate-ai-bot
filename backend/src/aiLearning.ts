@@ -4,6 +4,7 @@
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
 type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 import type { ConversationMemory } from "./leadScoring";
+import { prisma } from "./prisma";
 
 /**
  * Successful transcript pattern structure.
@@ -361,7 +362,6 @@ export async function captureSuccessfulPatterns(
   // TODO: Future - Store in vector database for similarity search
   // TODO: Future - Generate embeddings for pattern matching
   try {
-    const { prisma } = require("./prisma");
     const pattern = await prisma.aILearningPattern.create({
       data: {
         campaignContactId,
