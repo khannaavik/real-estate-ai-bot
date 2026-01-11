@@ -30,10 +30,21 @@ export async function clerkAuthMiddleware(
     const sessionClaims = await clerk.verifyToken(token);
 
     if (sessionClaims?.sub) {
-      // Extract userId from Clerk session and attach to request
+      // Extract userId and email from Clerk session and attach to request
       const userId = sessionClaims.sub;
-      req.auth = { userId };
-      console.log('[CLERK AUTH] ✓ Token verified, userId:', userId);
+      const email = (sessionClaims as any).email_addresses?.[0]?.email_address || (sessionClaims as any).email;
+      
+      if (!email) {
+        console.warn('[CLERK AUTH] Token verified but no email found in claims');
+        res.status(401).json({
+          ok: false,
+          error: 'Unauthorized - email not found',
+        });
+        return;
+      }
+      
+      req.auth = { userId, email };
+      console.log('[CLERK AUTH] ✓ Token verified, userId:', userId, 'email:', email);
       next();
     } else {
       console.warn('[CLERK AUTH] Token verified but no userId (sub) found in claims');
