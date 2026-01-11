@@ -7,7 +7,7 @@ datasource db {
 }
 
 model User {
-  id        String     @id @default(cuid())
+  id        String     @id // Use Clerk userId directly (user_xxx format)
   email     String     @unique
   name      String?
   createdAt DateTime   @default(now())
