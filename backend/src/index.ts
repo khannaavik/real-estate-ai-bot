@@ -398,132 +398,35 @@ async function startServer() {
 // Start the server
 startServer();
 
-app.get("/test-db", async (_req: Request, res: Response) => {
-  try {
-    // Upsert a test user
-    const user = await prisma.user.upsert({
-      where: { email: "test@botuser.com" },
-      update: {},
-      create: {
-        email: "test@botuser.com",
-        name: "Test Bot User",
-      },
-    });
-
-    // Count how many users total
-    const totalUsers = await prisma.user.count();
-
-    res.json({
-      ok: true,
-      user,
-      totalUsers,
-    });
-  } catch (err: any) {
-    console.error("DB test error:", err);
-    res.status(500).json({
-      ok: false,
-      error: "Failed to query DB",
-      details: String(err?.message || err),
-    });
-  }
-});
-
-// Diagnostic endpoint to check campaigns table
 app.get("/diagnostic/campaigns", async (_req: Request, res: Response) => {
   try {
-    console.log("[DIAGNOSTIC] /diagnostic/campaigns - Checking database...");
+    console.log("[DIAGNOSTIC] Checking campaigns table...");
+
     const campaignCount = await prisma.campaign.count();
-    console.log("[DIAGNOSTIC] /diagnostic/campaigns - Total campaigns in DB:", campaignCount);
-    
+
     const allCampaigns = await prisma.campaign.findMany({
-      select: { id: true, name: true, propertyId: true, createdAt: true },
+      select: {
+        id: true,
+        name: true,
+        userId: true,
+        propertyId: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: "desc" },
     });
-    console.log("[DIAGNOSTIC] /diagnostic/campaigns - Raw campaigns from DB:", JSON.stringify(allCampaigns, null, 2));
-    
-    res.json({
+
+    return res.json({
       ok: true,
       campaignCount,
       campaigns: allCampaigns,
-      message: `Found ${campaignCount} campaign(s) in database`,
     });
   } catch (err: any) {
-    console.error("[DIAGNOSTIC] /diagnostic/campaigns - Error:", err);
-    res.status(500).json({
+    console.error("[DIAGNOSTIC] campaigns error:", err);
+    return res.status(500).json({
       ok: false,
       error: "Failed to query campaigns",
       details: String(err?.message || err),
       code: err?.code,
-    });
-  }
-});
-
-app.get("/test-seed", async (_req: Request, res: Response) => {
-  try {
-    // 1) Ensure a test user exists (same as /test-db)
-    const user = await prisma.user.upsert({
-      where: { email: "test@botuser.com" },
-      update: {},
-      create: {
-        email: "test@botuser.com",
-        name: "Test Bot User",
-      },
-    });
-
-    // 2) Create a property
-    const property = await prisma.property.create({
-      data: {
-        name: "Sample 2BHK in Pune",
-        location: "Pune, Maharashtra",
-        priceRange: "60–70L",
-        config: "2BHK",
-        builder: "Sample Builder",
-      },
-    });
-
-    // 3) Create a campaign for that property
-    const campaign = await prisma.campaign.create({
-      data: {
-        name: "Test Campaign 1",
-        userId: user.id,
-        propertyId: property.id,
-      },
-    });
-
-    // 4) Create a contact (use YOUR phone so you can receive the call)
-    const contact = await prisma.contact.create({
-      data: {
-        userId: user.id,
-        name: "First Lead",
-        phone: process.env.TEST_CALL_TO || "+91XXXXXXXXXX",
-        email: "lead@example.com",
-        source: "Test Seed",
-      },
-    });
-
-    // 5) Link campaign + contact
-    const campaignContact = await prisma.campaignContact.create({
-      data: {
-        campaignId: campaign.id,
-        contactId: contact.id,
-        status: "NOT_PICK",
-      },
-    });
-
-    res.json({
-      ok: true,
-      user,
-      property,
-      campaign,
-      contact,
-      campaignContact,
-    });
-  } catch (err: any) {
-    console.error("Seed error:", err);
-    res.status(500).json({
-      ok: false,
-      error: "Failed to seed test data",
-      details: String(err?.message || err),
     });
   }
 });
