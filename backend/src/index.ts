@@ -1952,6 +1952,15 @@ app.post("/api/campaigns/generate-knowledge", async (req: Request, res: Response
 
 // POST /api/campaigns - Create new campaign
 app.post("/api/campaigns", async (req: Request, res: Response) => {
+  // LOGGING AT THE VERY TOP - BEFORE ANY VALIDATION
+  console.log('[POST /api/campaigns] ===== REQUEST START =====');
+  console.log('[POST /api/campaigns] req.path:', req.path);
+  console.log('[POST /api/campaigns] req.headers.authorization:', req.headers.authorization ? `${req.headers.authorization.substring(0, 20)}...` : 'MISSING');
+  console.log('[POST /api/campaigns] req.body:', JSON.stringify(req.body, null, 2));
+  console.log('[POST /api/campaigns] req.auth?.userId (resolved from Clerk middleware):', req.auth?.userId || 'MISSING');
+  console.log('[POST /api/campaigns] req.auth?.email (resolved from Clerk middleware):', req.auth?.email || 'MISSING');
+  console.log('[POST /api/campaigns] ===== END REQUEST LOG =====');
+
   try {
     const { 
       name, 
@@ -1987,17 +1996,25 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
       knowledgeUsageMode?: 'INTERNAL_ONLY' | 'PUBLIC';
     };
 
+    // TEMPORARILY DISABLED: Only validate name to isolate failures
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: Campaign name is required or invalid');
       return res.status(400).json({
         ok: false,
         error: "Campaign name is required",
       });
     }
 
+    // TEMPORARILY DISABLED: All other validations to isolate failures
+    // Using defaults for all optional fields
+    const identityMode = callerIdentityMode || 'GENERIC';
+    const usageMode = knowledgeUsageMode || 'INTERNAL_ONLY';
+    /*
     // Validate caller identity mode
     const identityMode = callerIdentityMode || 'GENERIC';
     if (identityMode !== 'GENERIC' && identityMode !== 'PERSONALIZED') {
+      console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: callerIdentityMode must be GENERIC or PERSONALIZED');
       return res.status(400).json({
         ok: false,
         error: "callerIdentityMode must be 'GENERIC' or 'PERSONALIZED'",
@@ -2007,6 +2024,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     // If mode is PERSONALIZED, callerDisplayName is required
     if (identityMode === 'PERSONALIZED') {
       if (!callerDisplayName || typeof callerDisplayName !== 'string' || callerDisplayName.trim().length === 0) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: callerDisplayName required when PERSONALIZED');
         return res.status(400).json({
           ok: false,
           error: "callerDisplayName is required when callerIdentityMode is 'PERSONALIZED'",
@@ -2017,6 +2035,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     // Validate campaignKnowledge structure if provided
     if (campaignKnowledge !== undefined && campaignKnowledge !== null) {
       if (typeof campaignKnowledge !== 'object' || Array.isArray(campaignKnowledge)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: campaignKnowledge must be an object');
         return res.status(400).json({
           ok: false,
           error: "campaignKnowledge must be an object",
@@ -2029,6 +2048,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
       const invalidKeys = knowledgeKeys.filter(key => !allowedFields.includes(key));
       
       if (invalidKeys.length > 0) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: campaignKnowledge contains invalid fields:', invalidKeys);
         return res.status(400).json({
           ok: false,
           error: `campaignKnowledge contains invalid fields: ${invalidKeys.join(', ')}. Allowed fields: ${allowedFields.join(', ')}`,
@@ -2037,30 +2057,35 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
 
       // Validate field types
       if (campaignKnowledge.priceRange !== undefined && typeof campaignKnowledge.priceRange !== 'string') {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: campaignKnowledge.priceRange must be a string');
         return res.status(400).json({
           ok: false,
           error: "campaignKnowledge.priceRange must be a string",
         });
       }
       if (campaignKnowledge.amenities !== undefined && !Array.isArray(campaignKnowledge.amenities)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: campaignKnowledge.amenities must be an array');
         return res.status(400).json({
           ok: false,
           error: "campaignKnowledge.amenities must be an array",
         });
       }
       if (campaignKnowledge.location !== undefined && typeof campaignKnowledge.location !== 'string') {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: campaignKnowledge.location must be a string');
         return res.status(400).json({
           ok: false,
           error: "campaignKnowledge.location must be a string",
         });
       }
       if (campaignKnowledge.possession !== undefined && typeof campaignKnowledge.possession !== 'string') {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: campaignKnowledge.possession must be a string');
         return res.status(400).json({
           ok: false,
           error: "campaignKnowledge.possession must be a string",
         });
       }
       if (campaignKnowledge.highlights !== undefined && !Array.isArray(campaignKnowledge.highlights)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: campaignKnowledge.highlights must be an array');
         return res.status(400).json({
           ok: false,
           error: "campaignKnowledge.highlights must be an array",
@@ -2071,6 +2096,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     // Validate knowledgeUsageMode if provided
     const usageMode = knowledgeUsageMode || 'INTERNAL_ONLY';
     if (usageMode !== 'INTERNAL_ONLY' && usageMode !== 'PUBLIC') {
+      console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: knowledgeUsageMode must be INTERNAL_ONLY or PUBLIC');
       return res.status(400).json({
         ok: false,
         error: "knowledgeUsageMode must be 'INTERNAL_ONLY' or 'PUBLIC'",
@@ -2080,6 +2106,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     // Validate voiceKnowledge structure if provided
     if (voiceKnowledge !== undefined && voiceKnowledge !== null) {
       if (typeof voiceKnowledge !== 'object' || Array.isArray(voiceKnowledge)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: voiceKnowledge must be an object');
         return res.status(400).json({
           ok: false,
           error: "voiceKnowledge must be an object",
@@ -2091,6 +2118,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
       const invalidKeys = knowledgeKeys.filter(key => !allowedFields.includes(key));
       
       if (invalidKeys.length > 0) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: voiceKnowledge contains invalid fields:', invalidKeys);
         return res.status(400).json({
           ok: false,
           error: `voiceKnowledge contains invalid fields: ${invalidKeys.join(', ')}. Allowed fields: ${allowedFields.join(', ')}`,
@@ -2099,30 +2127,35 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
 
       // Validate field types
       if (voiceKnowledge.safeTalkingPoints !== undefined && !Array.isArray(voiceKnowledge.safeTalkingPoints)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: voiceKnowledge.safeTalkingPoints must be an array');
         return res.status(400).json({
           ok: false,
           error: "voiceKnowledge.safeTalkingPoints must be an array",
         });
       }
       if (voiceKnowledge.idealBuyerProfile !== undefined && typeof voiceKnowledge.idealBuyerProfile !== 'string') {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: voiceKnowledge.idealBuyerProfile must be a string');
         return res.status(400).json({
           ok: false,
           error: "voiceKnowledge.idealBuyerProfile must be a string",
         });
       }
       if (voiceKnowledge.objectionsLikely !== undefined && !Array.isArray(voiceKnowledge.objectionsLikely)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: voiceKnowledge.objectionsLikely must be an array');
         return res.status(400).json({
           ok: false,
           error: "voiceKnowledge.objectionsLikely must be an array",
         });
       }
       if (voiceKnowledge.pricingConfidence !== undefined && !['LOW', 'MEDIUM', 'HIGH'].includes(voiceKnowledge.pricingConfidence)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: voiceKnowledge.pricingConfidence must be LOW, MEDIUM, or HIGH');
         return res.status(400).json({
           ok: false,
           error: "voiceKnowledge.pricingConfidence must be 'LOW', 'MEDIUM', or 'HIGH'",
         });
       }
       if (voiceKnowledge.doNotSay !== undefined && !Array.isArray(voiceKnowledge.doNotSay)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: voiceKnowledge.doNotSay must be an array');
         return res.status(400).json({
           ok: false,
           error: "voiceKnowledge.doNotSay must be an array",
@@ -2133,16 +2166,18 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     // Validate voiceTranscriptLanguage if provided
     if (voiceTranscriptLanguage !== undefined && voiceTranscriptLanguage !== null) {
       if (!['en', 'hi', 'hinglish'].includes(voiceTranscriptLanguage)) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: voiceTranscriptLanguage must be en, hi, or hinglish');
         return res.status(400).json({
           ok: false,
           error: "voiceTranscriptLanguage must be 'en', 'hi', or 'hinglish'",
         });
       }
     }
+    */
 
     // Extract userId and email from Clerk middleware
     if (!req.auth?.userId || !req.auth?.email) {
-      console.error('[POST /api/campaigns] Missing auth data - userId:', req.auth?.userId, 'email:', req.auth?.email);
+      console.log('[POST /api/campaigns] ✗ AUTH FAILED: Missing auth data - userId:', req.auth?.userId, 'email:', req.auth?.email);
       return res.status(401).json({
         ok: false,
         error: 'Unauthorized',
@@ -2184,6 +2219,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
       });
 
       if (!property) {
+        console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: Property not found with id:', propertyId);
         return res.status(404).json({
           ok: false,
           error: "Property not found",
@@ -2206,11 +2242,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
         voiceKnowledge: voiceKnowledge || null,
         knowledgeUsageMode: usageMode,
       } as any,
-      select: {
-        id: true,
-        name: true,
-        propertyId: true,
-      },
+      // Don't use select - return all fields so we can include them in response
     }) as any;
 
     console.log('[POST /api/campaigns] ✓ Campaign created successfully - id:', campaign.id, 'name:', campaign.name, 'userId:', userId);
@@ -2232,19 +2264,20 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     
     eventBus.emit('event', campaignCreatedEvent);
 
+    // Return response with { ok: true, campaign }
     res.status(201).json({
       ok: true,
       campaign: {
         id: campaign.id,
         name: campaign.name,
-        propertyId: campaign.propertyId,
-        callerIdentityMode: (campaign as any).callerIdentityMode || 'GENERIC',
-        callerDisplayName: (campaign as any).callerDisplayName || null,
-        campaignKnowledge: (campaign as any).campaignKnowledge || null,
-        voiceTranscript: (campaign as any).voiceTranscript || null,
-        voiceTranscriptLanguage: (campaign as any).voiceTranscriptLanguage || null,
-        voiceKnowledge: (campaign as any).voiceKnowledge || null,
-        knowledgeUsageMode: (campaign as any).knowledgeUsageMode || 'INTERNAL_ONLY',
+        propertyId: campaign.propertyId || null,
+        callerIdentityMode: campaign.callerIdentityMode || 'GENERIC',
+        callerDisplayName: campaign.callerDisplayName || null,
+        campaignKnowledge: campaign.campaignKnowledge || null,
+        voiceTranscript: campaign.voiceTranscript || null,
+        voiceTranscriptLanguage: campaign.voiceTranscriptLanguage || null,
+        voiceKnowledge: campaign.voiceKnowledge || null,
+        knowledgeUsageMode: campaign.knowledgeUsageMode || 'INTERNAL_ONLY',
       },
     });
   } catch (err: any) {
@@ -2262,7 +2295,7 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     }
     
     if (err?.code === 'P2002') {
-      console.error('[POST /api/campaigns] Unique constraint violation');
+      console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: Unique constraint violation - Campaign already exists');
       return res.status(400).json({
         ok: false,
         error: "Campaign already exists",
