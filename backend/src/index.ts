@@ -1958,7 +1958,6 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
   console.log('[POST /api/campaigns] req.headers.authorization:', req.headers.authorization ? `${req.headers.authorization.substring(0, 20)}...` : 'MISSING');
   console.log('[POST /api/campaigns] req.body:', JSON.stringify(req.body, null, 2));
   console.log('[POST /api/campaigns] req.auth?.userId (resolved from Clerk middleware):', req.auth?.userId || 'MISSING');
-  console.log('[POST /api/campaigns] req.auth?.email (resolved from Clerk middleware):', req.auth?.email || 'MISSING');
   console.log('[POST /api/campaigns] ===== END REQUEST LOG =====');
 
   try {
@@ -2175,42 +2174,20 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     }
     */
 
-    // Extract userId and email from Clerk middleware
-    if (!req.auth?.userId || !req.auth?.email) {
-      console.log('[POST /api/campaigns] ✗ AUTH FAILED: Missing auth data - userId:', req.auth?.userId, 'email:', req.auth?.email);
+    // Extract userId from Clerk middleware (Clerk is the sole user system)
+    if (!req.auth?.userId) {
+      console.log('[POST /api/campaigns] ✗ AUTH FAILED: Missing auth data - userId:', req.auth?.userId);
       return res.status(401).json({
         ok: false,
         error: 'Unauthorized',
       });
     }
 
-    const clerkUserId = req.auth.userId;
-    const clerkEmail = req.auth.email;
+    // Use Clerk userId directly - do NOT store users in Prisma
+    const userId = req.auth.userId;
     
-    console.log('[POST /api/campaigns] Request from Clerk userId:', clerkUserId, 'email:', clerkEmail);
+    console.log('[POST /api/campaigns] Request from Clerk userId:', userId);
     console.log('[POST /api/campaigns] Payload:', JSON.stringify(req.body, null, 2));
-
-    // CRITICAL: Upsert User BEFORE creating Campaign to ensure FK integrity
-    // This prevents P2003 foreign key constraint violations
-    // User.id = Clerk userId (user_xxx format) - NOT a generated CUID
-    // User.email is required and unique per Prisma schema
-    console.log('[POST /api/campaigns] Upserting User with Clerk userId:', clerkUserId, 'email:', clerkEmail);
-    const dbUser = await prisma.user.upsert({
-      where: { id: clerkUserId }, // Use Clerk userId as primary key
-      update: {
-        email: clerkEmail, // Update email if changed
-      },
-      create: {
-        id: clerkUserId, // Use Clerk userId directly (user_xxx format)
-        email: clerkEmail, // Required field per Prisma schema
-      },
-    });
-
-    console.log('[POST /api/campaigns] ✓ User upserted successfully - id:', dbUser.id, 'email:', dbUser.email);
-    console.log('[POST /api/campaigns] Safety check - Clerk userId:', clerkUserId, 'Prisma User.id:', dbUser.id, 'Match:', clerkUserId === dbUser.id);
-    
-    // Use Clerk userId directly for Campaign (NOT dbUser.id - they should be the same now)
-    const userId = clerkUserId;
 
     // Validate propertyId if provided
     if (propertyId) {
@@ -2227,12 +2204,12 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
       }
     }
 
-    // Create campaign - User must exist at this point (enforced by FK constraint)
+    // Create campaign using Clerk userId directly
     console.log('[POST /api/campaigns] Creating campaign with userId:', userId);
     const campaign = await prisma.campaign.create({
       data: {
         name: name.trim(),
-        userId: userId, // FK reference to User.id
+        userId: userId, // Use Clerk userId directly
         propertyId: propertyId || null,
         callerIdentityMode: identityMode,
         callerDisplayName: identityMode === 'PERSONALIZED' ? callerDisplayName?.trim() || null : null,
@@ -2283,26 +2260,32 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[POST /api/campaigns] ✗ Error creating campaign:', err?.message || err);
     
-    // Log specific error types for debugging
+    // Handle Prisma User-related errors separately (do not return as campaign errors)
     if (err?.code === 'P2003') {
-      console.error('[POST /api/campaigns] Foreign key constraint violation - User may not exist in database');
+      // Foreign key constraint violation - User may not exist in database
+      // This is a Prisma User error, not a campaign error
+      console.error('[POST /api/campaigns] Prisma User error - Foreign key constraint violation');
       console.error('[POST /api/campaigns] Error details:', JSON.stringify(err, null, 2));
       return res.status(500).json({
         ok: false,
-        error: "Failed to create campaign - database constraint violation",
-        details: process.env.NODE_ENV === 'development' ? err?.message : undefined,
+        error: "User account not found. Please ensure your account is properly set up.",
+        details: process.env.NODE_ENV === 'development' ? 'P2003: Foreign key constraint violation on User' : undefined,
       });
     }
     
+    // Handle unique constraint violations (campaign name uniqueness, etc.)
     if (err?.code === 'P2002') {
-      console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: Unique constraint violation - Campaign already exists');
+      console.log('[POST /api/campaigns] ✗ VALIDATION FAILED: Unique constraint violation');
+      // Extract which field caused the violation if available
+      const field = err?.meta?.target?.[0] || 'field';
       return res.status(400).json({
         ok: false,
-        error: "Campaign already exists",
+        error: `Campaign with this ${field} already exists`,
         details: process.env.NODE_ENV === 'development' ? err?.message : undefined,
       });
     }
     
+    // Generic error handling
     res.status(500).json({
       ok: false,
       error: "Failed to create campaign",
