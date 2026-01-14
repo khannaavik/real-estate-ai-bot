@@ -3,7 +3,7 @@ import { verifyToken } from '@clerk/backend';
 
 /**
  * Clerk authentication middleware
- * Verifies Bearer token and extracts userId from JWT claims.
+ * Verifies Bearer token using JWKS-based JWT verification with issuer.
  * Clerk is the ONLY identity provider - no Prisma User table, no foreign keys.
  * Returns 401 if token is missing or invalid.
  */
@@ -27,41 +27,29 @@ export async function clerkAuthMiddleware(
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     console.log('[CLERK AUTH] Verifying token...');
 
-    // Verify token using Clerk - this extracts userId from JWT
-    const { payload: sessionClaims } = await verifyToken(token, {
-      secretKey: process.env.CLERK_SECRET_KEY,
+    // Verify token using Clerk JWKS-based verification with issuer
+    const { payload } = await verifyToken(token, {
+      issuer: "https://handy-oarfish-21.clerk.accounts.dev",
     });
 
-    // Type assertion for JWT payload
-    const claims = sessionClaims as { 
-      userId?: string; 
-      user_id?: string; 
-      sub?: string; 
-      [key: string]: any 
-    };
-
-    // Extract userId from JWT claims - try multiple possible claim names
-    const clerkUserId =
-      claims.userId ||
-      claims.user_id ||
-      claims.sub;
-
-    if (!clerkUserId) {
-      console.error('[CLERK AUTH] Token verified but no userId found', claims);
-      res.status(401).json({ 
-        ok: false, 
-        error: "Invalid Clerk token" 
-      });
-      return;
+    if (!payload) {
+      console.error('[CLERK AUTH] Token verified but payload is undefined');
+      return res.status(401).json({ error: "Invalid Clerk token" });
     }
 
-    // TEMP DEBUG (REMOVE LATER)
-    console.log('[CLERK AUTH] JWT claims:', claims);
+    // Extract userId from JWT payload - try multiple possible claim names
+    const clerkUserId =
+      payload.userId ||
+      payload.user_id ||
+      payload.sub;
+
+    if (!clerkUserId) {
+      console.error('[CLERK AUTH] No userId in JWT payload:', payload);
+      return res.status(401).json({ error: "Invalid Clerk token" });
+    }
 
     // Attach userId to request - Clerk is the source of truth
-    req.auth = {
-      userId: clerkUserId,
-    };
+    req.auth = { userId: clerkUserId };
 
     console.log('[CLERK AUTH] ✓ Authentication successful, userId:', clerkUserId);
     next();
