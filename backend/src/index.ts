@@ -129,8 +129,7 @@ declare global {
     interface Request {
       userId?: string | null; // For backward compatibility with old authMiddleware
       auth?: {
-        userId: string;
-        email: string;
+        userId: string; // Clerk userId - Clerk is the ONLY identity provider
       };
     }
   }

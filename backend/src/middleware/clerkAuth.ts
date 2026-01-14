@@ -1,11 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import { createClerkClient, verifyToken } from '@clerk/backend';
+import { verifyToken } from '@clerk/backend';
 
 /**
  * Clerk authentication middleware
- * Verifies Bearer token, extracts userId, fetches user from Clerk API,
- * and attaches both userId and email to req.auth
- * Returns 401 if token is missing or invalid
+ * Verifies Bearer token and extracts userId from JWT claims.
+ * Clerk is the ONLY identity provider - no Prisma User table, no foreign keys.
+ * Returns 401 if token is missing or invalid.
  */
 export async function clerkAuthMiddleware(
   req: Request,
@@ -33,56 +33,37 @@ export async function clerkAuthMiddleware(
     });
 
     // Type assertion for JWT payload
-    const claims = sessionClaims as { sub?: string; [key: string]: any };
+    const claims = sessionClaims as { 
+      userId?: string; 
+      user_id?: string; 
+      sub?: string; 
+      [key: string]: any 
+    };
 
-    if (!claims?.sub) {
-      console.warn('[CLERK AUTH] Token verified but no userId (sub) found in claims');
-      res.status(401).json({
-        ok: false,
-        error: 'Unauthorized',
+    // Extract userId from JWT claims - try multiple possible claim names
+    const clerkUserId =
+      claims.userId ||
+      claims.user_id ||
+      claims.sub;
+
+    if (!clerkUserId) {
+      console.error('[CLERK AUTH] Token verified but no userId found', claims);
+      res.status(401).json({ 
+        ok: false, 
+        error: "Invalid Clerk token" 
       });
       return;
     }
 
-    // Extract userId from JWT claims
-    const userId = claims.sub;
-    console.log('[CLERK AUTH] Token verified, userId:', userId);
+    // TEMP DEBUG (REMOVE LATER)
+    console.log('[CLERK AUTH] JWT claims:', claims);
 
-    // Fetch full user from Clerk API (email is NOT in JWT by default)
-    console.log('[CLERK AUTH] Fetching user from Clerk API...');
-    const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
-    const user = await clerkClient.users.getUser(userId);
-    
-    if (!user) {
-      console.error('[CLERK AUTH] User not found in Clerk:', userId);
-      res.status(401).json({
-        ok: false,
-        error: 'Unauthorized - user not found',
-      });
-      return;
-    }
+    // Attach userId to request - Clerk is the source of truth
+    req.auth = {
+      userId: clerkUserId,
+    };
 
-    // Extract email from user object
-    // Clerk user object has primaryEmailAddress (EmailAddress object) or emailAddresses array
-    const userAny = user as any;
-    const primaryEmail = userAny.primaryEmailAddress?.emailAddress;
-    const firstEmail = userAny.emailAddresses?.[0]?.emailAddress;
-    const email = primaryEmail || firstEmail;
-    
-    if (!email) {
-      console.error('[CLERK AUTH] User found but no primary email address:', userId);
-      res.status(401).json({
-        ok: false,
-        error: 'Unauthorized - email not found',
-      });
-      return;
-    }
-
-    console.log('[CLERK AUTH] ✓ User fetched, email:', email);
-    
-    // Attach both userId and email to request
-    req.auth = { userId, email };
-    console.log('[CLERK AUTH] ✓ Authentication successful, userId:', userId, 'email:', email);
+    console.log('[CLERK AUTH] ✓ Authentication successful, userId:', clerkUserId);
     next();
   } catch (err: any) {
     console.error('[CLERK AUTH] ✗ Authentication failed:', err?.message || err);
