@@ -3369,23 +3369,34 @@ export default function Home() {
                             knowledgeUsageMode: newCampaignForm.knowledgeUsageMode,
                           };
 
-                          // Temporary log: API response
-                          console.log('[POST /api/campaigns] Request payload:', JSON.stringify(payload, null, 2));
+                          // Log the exact request body sent to backend
+                          console.log('[POST /api/campaigns] Frontend request body:', JSON.stringify(payload, null, 2));
+                          console.log('[POST /api/campaigns] Frontend POSTing to:', `${API_BASE}/api/campaigns`);
                           
-                          const data = await apiFetch(`${API_BASE}/api/campaigns`, {
+                          const response = await apiFetch(`${API_BASE}/api/campaigns`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload),
                           });
 
-                          // Temporary log: API response
-                          console.log('[POST /api/campaigns] Response:', JSON.stringify(data, null, 2));
+                          // Log API response
+                          console.log('[POST /api/campaigns] Frontend response status:', response.status);
+                          console.log('[POST /api/campaigns] Frontend response data:', JSON.stringify(response.data, null, 2));
 
-                          if (data.ok && data.campaign) {
-                            // Refresh campaigns from backend (source of truth)
-                            await fetchCampaigns();
+                          // Treat success ONLY when backend returns 201
+                          if (response.status === 201 && response.data?.ok && response.data?.campaign) {
+                            // Optimistically append campaign to sidebar state
+                            setCampaigns((prev) => {
+                              // Check if campaign already exists (avoid duplicates)
+                              const exists = prev.some((c) => c.id === response.data.campaign.id);
+                              if (exists) {
+                                return prev;
+                              }
+                              // Add new campaign at the top
+                              return [response.data.campaign, ...prev];
+                            });
                             
-                            // Close modal and reset wizard ONLY after successful backend response
+                            // Close modal and reset wizard ONLY after successful 201 response
                             setShowNewCampaignModal(false);
                             setWizardStep(1);
                             setKnowledgeSource(null);
@@ -3414,15 +3425,47 @@ export default function Home() {
                             }
                             setCampaignFormError(null);
                             
+                            // Refetch campaigns after creation to ensure persistence
+                            await fetchCampaigns();
+                            
                             setToast('Campaign created successfully');
                           } else {
-                            // On failure, show error and keep modal open
-                            setCampaignFormError(data.error || 'Failed to create campaign');
+                            // On failure, show backend error message verbatim
+                            const backendError = response.data?.error || 'Failed to create campaign';
+                            console.error('[POST /api/campaigns] Backend returned error (status:', response.status, '):', backendError);
+                            setCampaignFormError(backendError);
                           }
                         } catch (err: any) {
-                          console.error('[POST /api/campaigns] Error:', err);
-                          // On failure, show error and keep modal open
-                          const errorMessage = err?.message || 'Failed to create campaign. Please check your connection.';
+                          console.error('[POST /api/campaigns] Frontend error:', err);
+                          // Try to extract backend error message from response
+                          let errorMessage = 'Failed to create campaign. Please check your connection.';
+                          
+                          // Check if error message contains backend error (from authenticatedFetch)
+                          if (err?.message) {
+                            // If it's an HTTP error, try to parse the response
+                            if (err.message.includes('HTTP')) {
+                              // Extract error from HTTP response if available
+                              // Format: "HTTP 400: {"ok":false,"error":"..."}"
+                              const match = err.message.match(/HTTP \d+: (.+)/);
+                              if (match && match[1]) {
+                                try {
+                                  const parsed = JSON.parse(match[1]);
+                                  // Backend returns { ok: false, error: "..." }
+                                  errorMessage = parsed.error || parsed.message || match[1];
+                                } catch {
+                                  // If not JSON, use the text as-is
+                                  errorMessage = match[1];
+                                }
+                              } else {
+                                errorMessage = err.message;
+                              }
+                            } else {
+                              errorMessage = err.message;
+                            }
+                          }
+                          
+                          // Show backend error message verbatim
+                          console.log('[POST /api/campaigns] Showing error to user:', errorMessage);
                           setCampaignFormError(errorMessage);
                         } finally {
                           setIsCreatingCampaign(false);

@@ -4,15 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-}
-
-model User {
-  id        String     @id // Use Clerk userId directly (user_xxx format)
-  email     String     @unique
-  name      String?
-  createdAt DateTime   @default(now())
-  campaigns Campaign[]
-  contacts  Contact[]
+  url      = env("DATABASE_URL")
 }
 
 model Property {
@@ -44,7 +36,6 @@ model Campaign {
   voiceTranscriptLanguage String?
   batchJobs               BatchCallJob[]
   property                Property?                @relation(fields: [propertyId], references: [id])
-  user                    User                     @relation(fields: [userId], references: [id])
   campaignContacts        CampaignContact[]
   outcomePatterns         OutcomeLearningPattern[]
 }
@@ -59,7 +50,6 @@ model Contact {
   source    String?
   createdAt DateTime          @default(now())
   campaigns CampaignContact[]
-  user      User              @relation(fields: [userId], references: [id])
 }
 
 model CampaignContact {

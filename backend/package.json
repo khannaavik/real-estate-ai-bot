@@ -16,7 +16,7 @@
   "license": "ISC",
   "dependencies": {
     "@clerk/backend": "^2.29.0",
-    "@clerk/clerk-sdk-node": "^4.13.23",
+    "@clerk/clerk-sdk-node": "^5.1.6",
     "@prisma/adapter-pg": "^7.2.0",
     "@prisma/client": "^7.1.0",
     "@prisma/config": "^7.2.0",
@@ -29,7 +29,6 @@
     "multer": "^2.0.2",
     "openai": "^6.10.0",
     "pg": "^8.16.3",
-    "prisma": "^7.1.0",
     "twilio": "^5.10.7"
   },
   "devDependencies": {
@@ -38,6 +37,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.2",
     "@types/pg": "^8.15.6",
+    "prisma": "^6.19.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
   }

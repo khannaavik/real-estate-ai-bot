@@ -140,67 +140,6 @@ declare global {
 // Apply Clerk auth middleware ONLY to /api/campaigns routes
 app.use('/api/campaigns', clerkAuthMiddleware);
 
-async function authMiddleware(req: Request, res: Response, next: NextFunction) {
-  // Skip auth middleware for /health endpoint
-  if (req.path === '/health') {
-    return next();
-  }
-  
-  // Initialize userId as null (will remain null if no valid token)
-  req.userId = null;
-  
-  try {
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      // No auth token - allow request to continue (userId is null)
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[AUTH] No Authorization header present');
-      }
-      return next();
-    }
-    
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-    
-    // Verify JWT token with Clerk
-    const sessionClaims = await clerk.verifyToken(token);
-    
-    if (sessionClaims?.sub) {
-      // Map Clerk user to database User by email
-      const clerkEmail = (sessionClaims as any).email_addresses?.[0]?.email_address || (sessionClaims as any).email;
-      
-      if (clerkEmail) {
-        // Find User in database by email
-        const dbUser = await prisma.user.findUnique({
-          where: { email: clerkEmail },
-        });
-        
-        if (dbUser) {
-          req.userId = dbUser.id;
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[AUTH] Authenticated request - Clerk ID:', sessionClaims.sub, 'DB User ID:', dbUser.id);
-          }
-        } else {
-          // User not found in database - allow request to continue without userId
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[AUTH] Clerk user not found in database:', clerkEmail);
-          }
-        }
-      }
-    }
-  } catch (err: any) {
-    // Token invalid or expired - allow request to continue without userId
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[AUTH] Token verification failed:', err?.message || err);
-    }
-  }
-  
-  next();
-}
-
-// Apply auth middleware (does not block requests)
-app.use(authMiddleware);
-
 // SSE endpoint for real-time updates
 app.get('/events', (req: Request, res: Response) => {
   // Set SSE headers
@@ -2259,19 +2198,6 @@ app.post("/api/campaigns", async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[POST /api/campaigns] ✗ Error creating campaign:', err?.message || err);
-    
-    // Handle Prisma User-related errors separately (do not return as campaign errors)
-    if (err?.code === 'P2003') {
-      // Foreign key constraint violation - User may not exist in database
-      // This is a Prisma User error, not a campaign error
-      console.error('[POST /api/campaigns] Prisma User error - Foreign key constraint violation');
-      console.error('[POST /api/campaigns] Error details:', JSON.stringify(err, null, 2));
-      return res.status(500).json({
-        ok: false,
-        error: "User account not found. Please ensure your account is properly set up.",
-        details: process.env.NODE_ENV === 'development' ? 'P2003: Foreign key constraint violation on User' : undefined,
-      });
-    }
     
     // Handle unique constraint violations (campaign name uniqueness, etc.)
     if (err?.code === 'P2002') {

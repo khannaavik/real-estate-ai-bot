@@ -74,11 +74,26 @@ export async function authenticatedFetch(
     }
 
     const contentType = response.headers.get('content-type');
+    let data: any;
     if (contentType?.includes('application/json')) {
-      return await response.json();
+      data = await response.json();
+    } else {
+      data = await response.text();
     }
 
-    return await response.text();
+    // Return object with status and data for status code checking
+    // For backward compatibility, also spread data properties at top level if data is an object
+    const result: any = {
+      status: response.status,
+      data: data,
+    };
+    
+    // Spread data properties for backward compatibility (existing code expects data.campaigns, etc.)
+    if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+      Object.assign(result, data);
+    }
+    
+    return result;
   } catch (err: any) {
     clearTimeout(timeoutId);
     
