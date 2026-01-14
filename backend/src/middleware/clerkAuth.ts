@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import clerk from '@clerk/clerk-sdk-node';
+import { createClerkClient, verifyToken } from '@clerk/backend';
 
 /**
  * Clerk authentication middleware
@@ -28,9 +28,14 @@ export async function clerkAuthMiddleware(
     console.log('[CLERK AUTH] Verifying token...');
 
     // Verify token using Clerk - this extracts userId from JWT
-    const sessionClaims = await clerk.verifyToken(token);
+    const { payload: sessionClaims } = await verifyToken(token, {
+      secretKey: process.env.CLERK_SECRET_KEY,
+    });
 
-    if (!sessionClaims?.sub) {
+    // Type assertion for JWT payload
+    const claims = sessionClaims as { sub?: string; [key: string]: any };
+
+    if (!claims?.sub) {
       console.warn('[CLERK AUTH] Token verified but no userId (sub) found in claims');
       res.status(401).json({
         ok: false,
@@ -40,12 +45,13 @@ export async function clerkAuthMiddleware(
     }
 
     // Extract userId from JWT claims
-    const userId = sessionClaims.sub;
+    const userId = claims.sub;
     console.log('[CLERK AUTH] Token verified, userId:', userId);
 
     // Fetch full user from Clerk API (email is NOT in JWT by default)
     console.log('[CLERK AUTH] Fetching user from Clerk API...');
-    const user = await clerk.users.getUser(userId);
+    const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+    const user = await clerkClient.users.getUser(userId);
     
     if (!user) {
       console.error('[CLERK AUTH] User not found in Clerk:', userId);

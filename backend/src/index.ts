@@ -6,7 +6,6 @@ import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { prisma } from "./prisma";
-import clerk from '@clerk/clerk-sdk-node';
 import { clerkAuthMiddleware } from './middleware/clerkAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
 type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
