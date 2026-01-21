@@ -24,8 +24,19 @@ export async function clerkAuthMiddleware(
     const token = authHeader.slice(7);
     console.log("[CLERK AUTH] Verifying token...");
 
+    const publicKey = process.env.CLERK_JWT_KEY?.replace(/\\n/g, "\n");
+
+    if (!publicKey) {
+      throw new Error("CLERK_JWT_KEY is missing");
+    }
+
+    console.log(
+      "[CLERK AUTH] JWT key loaded, length:",
+      publicKey.length
+    );
+
     const { payload } = await verifyToken(token, {
-      jwtKey: process.env.CLERK_JWT_KEY!,
+      jwtKey: publicKey,
     });
 
     if (!payload) {
