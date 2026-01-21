@@ -82,7 +82,7 @@ app.use(
   })
 );
 
-app.options("*", cors());
+app.options("/*", cors());
 
 // Health check route - ZERO dependencies (must be AFTER CORS middleware)
 // Must NOT use Prisma, auth, env vars, or throw errors
