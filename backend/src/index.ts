@@ -78,11 +78,8 @@ app.use(
       "Authorization",
       "x-dashboard-pin",
     ],
-    credentials: true,
   })
 );
-
-app.options("/*", cors());
 
 // Health check route - ZERO dependencies (must be AFTER CORS middleware)
 // Must NOT use Prisma, auth, env vars, or throw errors
