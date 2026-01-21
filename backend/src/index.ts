@@ -66,36 +66,23 @@ const apiRoutes = express.Router();
 const serverStartTime = Date.now();
 
 // CORS configuration - MUST be applied BEFORE all routes including /health
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:4000',
-  'https://real-estate-ai-bot-2424.vercel.app',
-];
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "https://real-estate-ai-bot-2424-6rm099i8t-khannaaviks-projects.vercel.app",
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "x-dashboard-pin",
+    ],
+    credentials: true,
+  })
+);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow server-to-server, curl, Railway health checks (no origin header)
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    // Allow all Vercel preview deployments
-    if (origin.endsWith('.vercel.app')) {
-      return callback(null, true);
-    }
-
-    // Allow exact matches from allowedOrigins
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    // IMPORTANT: do NOT throw - reject invalid origins safely
-    return callback(null, false);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+app.options("*", cors());
 
 // Health check route - ZERO dependencies (must be AFTER CORS middleware)
 // Must NOT use Prisma, auth, env vars, or throw errors
