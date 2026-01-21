@@ -24,7 +24,9 @@ export async function clerkAuthMiddleware(
     const token = authHeader.slice(7);
     console.log("[CLERK AUTH] Verifying token...");
 
-    const { payload } = await verifyToken(token, {});
+    const { payload } = await verifyToken(token, {
+      jwtKey: process.env.CLERK_JWT_KEY!,
+    });
 
     if (!payload) {
       res.status(401).json({ ok: false, error: "Invalid token" });
