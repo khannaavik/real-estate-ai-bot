@@ -68,10 +68,12 @@ const serverStartTime = Date.now();
 // CORS configuration - MUST be applied BEFORE all routes including /health
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "https://real-estate-ai-bot-2424-6rm099i8t-khannaaviks-projects.vercel.app",
-    ],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (origin.includes("vercel.app")) return callback(null, true);
+      if (origin.includes("localhost")) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
