@@ -1520,9 +1520,6 @@ export default function Home() {
       if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
         setAuthStatus('required');
         setToast("PIN required. Please enter the dashboard PIN.");
-      if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
-        setAuthStatus('required');
-        setToast("PIN required. Please enter the dashboard PIN.");
         // DO NOT enable mock mode on auth errors
       } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
         // Only enable mock mode on network errors
