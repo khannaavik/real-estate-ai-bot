@@ -37,7 +37,6 @@ model Campaign {
   property                Property?                @relation(fields: [propertyId], references: [id])
   campaignContacts        CampaignContact[]
   outcomePatterns         OutcomeLearningPattern[]
-  calls                   Call[]
 }
 
 model Contact {
@@ -73,7 +72,6 @@ model CampaignContact {
   extraContext          Json?
   learningPatterns      AILearningPattern[]
   calls                 CallLog[]
-  callRecords           Call[]
   campaign              Campaign            @relation(fields: [campaignId], references: [id])
   contact               Contact             @relation(fields: [contactId], references: [id])
 }
@@ -115,17 +113,14 @@ model CallLog {
 }
 
 model Call {
-  id                String       @id @default(cuid())
-  campaignId        String
-  campaignContactId String
-  status            CallStatus
-  interest          CallInterest
-  summary           String?
-  durationSeconds   Int?
-  startedAt         DateTime     @default(now())
-  endedAt           DateTime?
-  campaign          Campaign     @relation(fields: [campaignId], references: [id])
-  campaignContact   CampaignContact @relation(fields: [campaignContactId], references: [id])
+  id            String        @id @default(cuid())
+  campaignId    String
+  leadId        String
+  status        CallStatus
+  durationSec   Int?
+  interestLevel InterestLevel?
+  summary       String?
+  createdAt     DateTime      @default(now())
 }
 
 /// *
@@ -195,13 +190,13 @@ enum LeadStatus {
 
 enum CallStatus {
   STARTED
-  COMPLETED
+  PICKED
   NO_ANSWER
+  COMPLETED
 }
 
-enum CallInterest {
-  NONE
-  LOW
-  MEDIUM
-  HIGH
+enum InterestLevel {
+  COLD
+  WARM
+  HOT
 }

@@ -23,9 +23,10 @@ interface LeadDrawerProps {
   sseError?: Error | null;
   callSession?: {
     callId: string;
-    status?: "STARTED" | "COMPLETED" | "NO_ANSWER";
-    interest?: "NONE" | "LOW" | "MEDIUM" | "HIGH";
+    status?: "STARTED" | "PICKED" | "COMPLETED" | "NO_ANSWER";
+    interest?: "NONE" | "LOW" | "MEDIUM" | "HIGH" | "COLD" | "WARM" | "HOT";
     summary?: string | null;
+    nextAction?: string | null;
   };
 }
 
@@ -109,6 +110,21 @@ export function LeadDrawer({
   const [humanFeedback, setHumanFeedback] = useState<string>('');
   // STEP 21: Advanced Details collapsed state
   const [showAdvancedDetails, setShowAdvancedDetails] = useState(false);
+
+  const aiInterest = callSession?.interest;
+  const interestBadge = (() => {
+    if (!aiInterest || aiInterest === "NONE") return null;
+    const normalized =
+      aiInterest === "HIGH" ? "HOT" : aiInterest === "MEDIUM" ? "WARM" : aiInterest === "LOW" ? "COLD" : aiInterest;
+    const label = normalized.charAt(0) + normalized.slice(1).toLowerCase();
+    const badgeClass =
+      normalized === "HOT"
+        ? "bg-rose-100 text-rose-700"
+        : normalized === "WARM"
+        ? "bg-amber-100 text-amber-700"
+        : "bg-blue-100 text-blue-700";
+    return { label, badgeClass };
+  })();
 
   // Generate mock timeline events
   const generateMockTimeline = (lead: CampaignContact): LeadTimelineEvent[] => {
@@ -910,7 +926,21 @@ export function LeadDrawer({
                   </p>
                 </div>
 
-                {callSession?.status && callSession.status !== 'STARTED' && (
+                {callSession?.status === 'NO_ANSWER' && (
+                  <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
+                    <h4 className="text-sm font-semibold text-amber-900 mb-2">Call Outcome</h4>
+                    <div className="text-sm text-amber-800">No answer. Try again later.</div>
+                  </div>
+                )}
+
+                {callSession?.status === 'PICKED' && (
+                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <h4 className="text-sm font-semibold text-blue-900 mb-2">Call Status</h4>
+                    <div className="text-sm text-blue-800">Call in progress…</div>
+                  </div>
+                )}
+
+                {callSession?.status && callSession.status !== 'STARTED' && callSession.status !== 'PICKED' && callSession.status !== 'NO_ANSWER' && (
                   <div className="p-4 bg-indigo-50 rounded-lg border border-indigo-200">
                     <h4 className="text-sm font-semibold text-indigo-900 mb-2">Mock Call Outcome</h4>
                     <div className="text-sm text-indigo-800">
@@ -920,6 +950,34 @@ export function LeadDrawer({
                         <div className="mt-2 text-indigo-700">{callSession.summary}</div>
                       )}
                     </div>
+                  </div>
+                )}
+
+                {(callSession?.status === 'COMPLETED' || callSession?.summary || callSession?.nextAction) && (
+                  <div className="p-4 bg-white rounded-lg border border-gray-200">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <h4 className="text-sm font-semibold text-gray-900">AI Call Intelligence</h4>
+                      {interestBadge && (
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${interestBadge.badgeClass}`}>
+                          {interestBadge.label}
+                        </span>
+                      )}
+                    </div>
+                    {callSession?.summary && (
+                      <div className="text-sm text-gray-700 space-y-1">
+                        {callSession.summary.split(/\r?\n/).map((line, index) => (
+                          <p key={`${callSession.callId}-summary-${index}`}>{line}</p>
+                        ))}
+                      </div>
+                    )}
+                    {callSession?.nextAction && (
+                      <div className="mt-3 text-sm text-gray-700">
+                        <span className="font-semibold">Suggested action:</span> {callSession.nextAction}
+                      </div>
+                    )}
+                    {!callSession?.summary && !callSession?.nextAction && (
+                      <div className="text-sm text-gray-500">AI analysis not available yet.</div>
+                    )}
                   </div>
                 )}
 
@@ -977,7 +1035,7 @@ export function LeadDrawer({
                     >
                       Start New Call
                     </button>
-                    {callSession?.status === 'STARTED' && onEndCall && (
+                    {(callSession?.status === 'STARTED' || callSession?.status === 'PICKED') && onEndCall && (
                       <button
                         className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 transition-colors"
                         onClick={onEndCall}

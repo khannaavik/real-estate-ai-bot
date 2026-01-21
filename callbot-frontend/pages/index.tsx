@@ -69,11 +69,13 @@ export default function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [showScoreModal, setShowScoreModal] = useState(false);
   const [activeCallLogId, setActiveCallLogId] = useState<string | null>(null);
+  const endCallTimeoutsRef = useRef<Record<string, number>>({});
   const [callSessions, setCallSessions] = useState<Record<string, {
     callId: string;
-    status?: "STARTED" | "COMPLETED" | "NO_ANSWER";
-    interest?: "NONE" | "LOW" | "MEDIUM" | "HIGH";
+    status?: "STARTED" | "PICKED" | "COMPLETED" | "NO_ANSWER";
+    interest?: "NONE" | "LOW" | "MEDIUM" | "HIGH" | "COLD" | "WARM" | "HOT";
     summary?: string | null;
+    nextAction?: string | null;
   }>>({});
   const [transcript, setTranscript] = useState("");
   const [durationSeconds, setDurationSeconds] = useState<number>(90);
@@ -1152,6 +1154,15 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaigns.length, selectedCampaign, loading]);
 
+  useEffect(() => {
+    return () => {
+      Object.values(endCallTimeoutsRef.current).forEach((timeoutId) => {
+        clearTimeout(timeoutId);
+      });
+      endCallTimeoutsRef.current = {};
+    };
+  }, []);
+
   async function fetchCampaigns() {
     console.log("[DIAGNOSTIC] fetchCampaigns - Starting...");
     console.log("[DIAGNOSTIC] fetchCampaigns - API_BASE:", API_BASE);
@@ -1287,18 +1298,45 @@ export default function Home() {
     setLoading(true);
     try {
       const res = await apiFetch(`${API_BASE}/api/call/start/${campaignContactId}`, { method: "POST" });
-      if (res?.ok && res?.call?.id) {
+      if (res?.callId && res?.status) {
+        setCallSessions((prev) => ({
+          ...prev,
+          [campaignContactId]: {
+            callId: res.callId,
+            status: res.status,
+          },
+        }));
+
+        if (res.status === "NO_ANSWER") {
+          setToast("No answer — try again later.");
+          return;
+        }
+
+        if (res.status === "PICKED") {
+          setToast("Call in progress...");
+          const delayMs = (Math.floor(Math.random() * 6) + 10) * 1000;
+          if (endCallTimeoutsRef.current[campaignContactId]) {
+            clearTimeout(endCallTimeoutsRef.current[campaignContactId]);
+          }
+          endCallTimeoutsRef.current[campaignContactId] = window.setTimeout(() => {
+            endCallByCallId(res.callId, campaignContactId);
+          }, delayMs);
+        }
+      } else if (res?.ok && res?.call?.id) {
         setCallSessions((prev) => ({
           ...prev,
           [campaignContactId]: {
             callId: res.call.id,
             status: res.call.status,
-            interest: res.call.interest,
+            interest: res.call.interestLevel ?? res.call.interest,
             summary: res.call.summary,
+            nextAction: res.nextAction ?? null,
           },
         }));
       }
-      setToast("Call started — mock session created");
+      if (!res?.status) {
+        setToast("Call started — mock session created");
+      }
       if (selectedCampaign) openCampaign(selectedCampaign);
     } catch (err: any) {
       const errorMessage = err?.message || String(err);
@@ -1321,29 +1359,24 @@ export default function Home() {
     }
   }
 
-  async function endCall(campaignContactId: string) {
+  async function endCallByCallId(callId: string, campaignContactId: string) {
     if (mockMode) {
       setToast("(Mock) Call ended — simulated outcome");
       return;
     }
 
-    const session = callSessions[campaignContactId];
-    if (!session?.callId) {
-      setToast("No active call to end.");
-      return;
-    }
-
     setLoading(true);
     try {
-      const res = await apiFetch(`${API_BASE}/api/call/end/${session.callId}`, { method: "POST" });
+      const res = await apiFetch(`${API_BASE}/api/call/end/${callId}`, { method: "POST" });
       if (res?.ok && res?.call) {
         setCallSessions((prev) => ({
           ...prev,
           [campaignContactId]: {
             callId: res.call.id,
             status: res.call.status,
-            interest: res.call.interest,
+            interest: res.call.interestLevel ?? res.call.interest,
             summary: res.call.summary,
+            nextAction: res.nextAction ?? null,
           },
         }));
         setToast(`Call ended — ${res.call.status}`);
@@ -1361,6 +1394,15 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function endCall(campaignContactId: string) {
+    const session = callSessions[campaignContactId];
+    if (!session?.callId) {
+      setToast("No active call to end.");
+      return;
+    }
+    await endCallByCallId(session.callId, campaignContactId);
   }
 
   // Check if there are eligible leads for batch calling
@@ -2210,6 +2252,18 @@ export default function Home() {
                           cc.status === 'HOT' ? 'border-l-4 border-red-500' :
                           cc.status === 'WARM' ? 'border-l-4 border-amber-500' :
                           'border-l-0';
+                      const callSession = callSessions[cc.id];
+                      const callStatus = callSession?.status;
+                      const callInterest = callSession?.interest;
+                      const callSummary = callSession?.summary;
+                      const interestBadgeClass =
+                        callInterest === 'HOT'
+                          ? 'bg-red-100 text-red-700'
+                          : callInterest === 'WARM'
+                          ? 'bg-amber-100 text-amber-700'
+                          : callInterest === 'COLD'
+                          ? 'bg-gray-100 text-gray-700'
+                          : 'bg-gray-100 text-gray-700';
                         
                         return (
                         <div
@@ -2251,6 +2305,25 @@ export default function Home() {
                             {/* Last Call - Mobile */}
                             <div className="text-xs text-gray-400">
                               Last call: {cc.lastCallAt ? new Date(cc.lastCallAt).toLocaleString() : '—'}
+                            </div>
+
+                            {/* Call Outcome - Mobile */}
+                            <div className="text-xs text-gray-600">
+                              {callStatus ? (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-gray-500">Status: {callStatus}</span>
+                                  {callInterest && (
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${interestBadgeClass}`}>
+                                      {callInterest === 'HOT' ? 'Hot' : callInterest === 'WARM' ? 'Warm' : 'Cold'}
+                                    </span>
+                                  )}
+                                  {callSummary && (
+                                    <span className="truncate max-w-[220px] text-gray-500">{callSummary}</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-gray-400">No calls yet</span>
+                              )}
                             </div>
 
                             {/* Action Buttons - Mobile: Primary action only */}
@@ -2296,6 +2369,25 @@ export default function Home() {
                               {/* Last Call - Prevent layout shift with fixed height */}
                               <div className="text-xs text-gray-400 mt-2 min-h-[16px]">
                                 {cc.lastCallAt ? `Last call: ${new Date(cc.lastCallAt).toLocaleString()}` : ''}
+                              </div>
+
+                              {/* Call Outcome - Desktop */}
+                              <div className="mt-1 text-xs text-gray-600 min-h-[16px]">
+                                {callStatus ? (
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-gray-500">Status: {callStatus}</span>
+                                    {callInterest && (
+                                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${interestBadgeClass}`}>
+                                        {callInterest === 'HOT' ? 'Hot' : callInterest === 'WARM' ? 'Warm' : 'Cold'}
+                                      </span>
+                                    )}
+                                    {callSummary && (
+                                      <span className="truncate max-w-[280px] text-gray-500">{callSummary}</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400">No calls yet</span>
+                                )}
                               </div>
                             </div>
 

@@ -29,6 +29,7 @@ import { recordOutcomePattern, getTopPatterns } from "./outcomeLearning";
 import { selectAdaptiveStrategy, type AdaptiveStrategyContext, selectBestStrategyForAutoApply, type AutoApplyStrategyResult } from "./adaptiveStrategy";
 import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMainPitchPoints, getClosingLine, ScriptMode as ConversationScriptMode } from "./conversationStrategy";
 import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCallLive } from "./liveCallMonitor";
+import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./services/aiCallAnalysis";
 
 
 
@@ -1724,11 +1725,17 @@ apiRoutes.post("/call/start/:leadId", async (req: Request, res: Response) => {
     const call = await prisma.call.create({
       data: {
         campaignId: campaignContact.campaignId,
-        campaignContactId: campaignContact.id,
+        leadId: campaignContact.id,
         status: "STARTED",
-        interest: "NONE",
-        summary: "Mock call started.",
       },
+    });
+
+    const pickedUp = Math.random() < 0.7;
+    const nextStatus = pickedUp ? "PICKED" : "NO_ANSWER";
+
+    await prisma.call.update({
+      where: { id: call.id },
+      data: { status: nextStatus },
     });
 
     await prisma.campaignContact.update({
@@ -1736,7 +1743,7 @@ apiRoutes.post("/call/start/:leadId", async (req: Request, res: Response) => {
       data: { lastCallAt: new Date() },
     });
 
-    res.status(201).json({ ok: true, call });
+    res.status(201).json({ callId: call.id, status: nextStatus });
   } catch (err: any) {
     console.error("Mock start call error:", err?.message || err);
     res.status(500).json({ ok: false, error: "Failed to start call" });
@@ -1755,7 +1762,6 @@ apiRoutes.post("/call/end/:callId", async (req: Request, res: Response) => {
 
     const existingCall = await prisma.call.findUnique({
       where: { id: callId },
-      include: { campaignContact: true },
     });
 
     if (!existingCall) {
@@ -1763,62 +1769,61 @@ apiRoutes.post("/call/end/:callId", async (req: Request, res: Response) => {
       return;
     }
 
-    if (existingCall.endedAt) {
-      res.status(200).json({ ok: true, call: existingCall });
-      return;
-    }
+    const durationSec = Math.floor(Math.random() * 31) + 10;
+    const callStatusForAnalysis: AICallStatus =
+      existingCall.status === "NO_ANSWER" ? "NO_ANSWER" : "PICKED";
 
-    const pickedUp = Math.random() < 0.7;
-    const durationSeconds = 120;
+    const [campaign, lead] = await Promise.all([
+      prisma.campaign.findUnique({
+        where: { id: existingCall.campaignId },
+        select: { name: true },
+      }),
+      prisma.campaignContact.findUnique({
+        where: { id: existingCall.leadId },
+        select: { contact: { select: { name: true } } },
+      }),
+    ]);
 
-    let status: "COMPLETED" | "NO_ANSWER";
-    let interest: "NONE" | "LOW" | "MEDIUM" | "HIGH";
-    let summary: string;
+    const campaignName = campaign?.name || "Campaign";
+    const leadName = lead?.contact?.name || "Lead";
 
-    if (!pickedUp) {
-      status = "NO_ANSWER";
-      interest = "NONE";
-      summary = "No answer. Follow up later.";
-    } else {
-      const interestOptions = ["LOW", "MEDIUM", "HIGH"] as const;
-      interest = interestOptions[Math.floor(Math.random() * interestOptions.length)];
-      status = "COMPLETED";
-      summary =
-        interest === "HIGH"
-          ? "Lead showed high interest and asked for next steps."
-          : interest === "MEDIUM"
-          ? "Lead showed moderate interest and asked basic questions."
-          : "Lead showed low interest and requested a later follow-up.";
-    }
+    const aiResult = await analyzeCallOutcome({
+      campaignName,
+      leadName,
+      callStatus: callStatusForAnalysis,
+    });
 
     const updatedCall = await prisma.call.update({
       where: { id: existingCall.id },
       data: {
-        status,
-        interest,
-        summary,
-        durationSeconds,
-        endedAt: new Date(),
+        status: "COMPLETED",
+        durationSec,
+        interestLevel: aiResult.interestLevel,
+        summary: aiResult.summary,
       },
     });
 
-    if (existingCall.campaignContactId) {
-      let leadStatus: LeadStatus | null = null;
-      if (pickedUp) {
-        leadStatus =
-          interest === "HIGH" ? "HOT" : interest === "MEDIUM" ? "WARM" : "COLD";
-      }
-
+    if (existingCall.leadId) {
+      const leadStatus: LeadStatus =
+        aiResult.interestLevel === "HOT"
+          ? "HOT"
+          : aiResult.interestLevel === "WARM"
+          ? "WARM"
+          : "COLD";
       await prisma.campaignContact.update({
-        where: { id: existingCall.campaignContactId },
+        where: { id: existingCall.leadId },
         data: {
           lastCallAt: new Date(),
-          ...(leadStatus ? { status: leadStatus } : {}),
+          status: leadStatus,
         },
       });
     }
 
-    res.status(200).json({ ok: true, call: updatedCall });
+    res.status(200).json({
+      ok: true,
+      call: updatedCall,
+      nextAction: aiResult.nextAction,
+    });
   } catch (err: any) {
     console.error("Mock end call error:", err?.message || err);
     res.status(500).json({ ok: false, error: "Failed to end call" });
@@ -1837,7 +1842,16 @@ apiRoutes.get("/calls/:campaignId", async (req: Request, res: Response) => {
 
     const calls = await prisma.call.findMany({
       where: { campaignId },
-      orderBy: { startedAt: "desc" },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        leadId: true,
+        status: true,
+        interestLevel: true,
+        durationSec: true,
+        summary: true,
+        createdAt: true,
+      },
     });
 
     res.status(200).json({ ok: true, calls });
