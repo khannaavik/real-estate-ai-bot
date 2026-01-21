@@ -14,12 +14,19 @@ interface LeadDrawerProps {
   mockMode?: boolean;
   onApplyScore?: () => void;
   onStartCall?: () => void;
+  onEndCall?: () => void;
   previousFocusElement?: HTMLElement | null;
   liveTimelineEvent?: LeadTimelineEvent | null;
   onLeadStatusUpdate?: (status: LeadStatus) => void;
   isLiveConnected?: boolean;
   isReconnecting?: boolean;
   sseError?: Error | null;
+  callSession?: {
+    callId: string;
+    status?: "STARTED" | "COMPLETED" | "NO_ANSWER";
+    interest?: "NONE" | "LOW" | "MEDIUM" | "HIGH";
+    summary?: string | null;
+  };
 }
 
 export function LeadDrawer({ 
@@ -30,12 +37,14 @@ export function LeadDrawer({
   mockMode = false,
   onApplyScore,
   onStartCall,
+  onEndCall,
   previousFocusElement,
   liveTimelineEvent,
   onLeadStatusUpdate,
   isLiveConnected = false,
   isReconnecting = false,
   sseError = null,
+  callSession,
 }: LeadDrawerProps) {
   const API_BASE = getApiBaseUrl();
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -901,6 +910,19 @@ export function LeadDrawer({
                   </p>
                 </div>
 
+                {callSession?.status && callSession.status !== 'STARTED' && (
+                  <div className="p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+                    <h4 className="text-sm font-semibold text-indigo-900 mb-2">Mock Call Outcome</h4>
+                    <div className="text-sm text-indigo-800">
+                      <div>Status: {callSession.status}</div>
+                      <div>Interest: {callSession.interest || 'NONE'}</div>
+                      {callSession.summary && (
+                        <div className="mt-2 text-indigo-700">{callSession.summary}</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Recommended Next Action */}
                 <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
                   <h4 className="text-sm font-semibold text-gray-900 mb-2">Recommended Next Action</h4>
@@ -955,6 +977,14 @@ export function LeadDrawer({
                     >
                       Start New Call
                     </button>
+                    {callSession?.status === 'STARTED' && onEndCall && (
+                      <button
+                        className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 transition-colors"
+                        onClick={onEndCall}
+                      >
+                        End Call
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

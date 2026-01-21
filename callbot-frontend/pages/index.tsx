@@ -69,6 +69,12 @@ export default function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [showScoreModal, setShowScoreModal] = useState(false);
   const [activeCallLogId, setActiveCallLogId] = useState<string | null>(null);
+  const [callSessions, setCallSessions] = useState<Record<string, {
+    callId: string;
+    status?: "STARTED" | "COMPLETED" | "NO_ANSWER";
+    interest?: "NONE" | "LOW" | "MEDIUM" | "HIGH";
+    summary?: string | null;
+  }>>({});
   const [transcript, setTranscript] = useState("");
   const [durationSeconds, setDurationSeconds] = useState<number>(90);
   const [backendHealth, setBackendHealth] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -1280,8 +1286,19 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const res = await apiFetch(`${API_BASE}/call/start/${campaignContactId}`);
-      setToast((res && (res as any).message) || "Call started — ringing the contact");
+      const res = await apiFetch(`${API_BASE}/api/call/start/${campaignContactId}`, { method: "POST" });
+      if (res?.ok && res?.call?.id) {
+        setCallSessions((prev) => ({
+          ...prev,
+          [campaignContactId]: {
+            callId: res.call.id,
+            status: res.call.status,
+            interest: res.call.interest,
+            summary: res.call.summary,
+          },
+        }));
+      }
+      setToast("Call started — mock session created");
       if (selectedCampaign) openCampaign(selectedCampaign);
     } catch (err: any) {
       const errorMessage = err?.message || String(err);
@@ -1298,6 +1315,48 @@ export default function Home() {
         setMockMode(true);
       } else {
         setToast(`Failed to start call: ${errorMessage}`);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function endCall(campaignContactId: string) {
+    if (mockMode) {
+      setToast("(Mock) Call ended — simulated outcome");
+      return;
+    }
+
+    const session = callSessions[campaignContactId];
+    if (!session?.callId) {
+      setToast("No active call to end.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await apiFetch(`${API_BASE}/api/call/end/${session.callId}`, { method: "POST" });
+      if (res?.ok && res?.call) {
+        setCallSessions((prev) => ({
+          ...prev,
+          [campaignContactId]: {
+            callId: res.call.id,
+            status: res.call.status,
+            interest: res.call.interest,
+            summary: res.call.summary,
+          },
+        }));
+        setToast(`Call ended — ${res.call.status}`);
+      }
+      if (selectedCampaign) openCampaign(selectedCampaign);
+    } catch (err: any) {
+      const errorMessage = err?.message || String(err);
+      console.error("endCall error:", errorMessage);
+      if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
+        setAuthStatus('required');
+        setToast("PIN required. Please enter the dashboard PIN.");
+      } else {
+        setToast(`Failed to end call: ${errorMessage}`);
       }
     } finally {
       setLoading(false);
@@ -3601,12 +3660,14 @@ export default function Home() {
           mockMode={mockMode}
           onApplyScore={() => selectedLead && openApplyScoreModal(selectedLead.id)}
           onStartCall={() => selectedLead && startCall(selectedLead.id)}
+          onEndCall={() => selectedLead && endCall(selectedLead.id)}
           previousFocusElement={previousFocusElementRef.current}
           liveTimelineEvent={latestTimelineEvent}
           onLeadStatusUpdate={handleLeadStatusUpdate}
           isLiveConnected={isLiveConnected}
           isReconnecting={isReconnecting}
           sseError={sseError}
+          callSession={selectedLead ? callSessions[selectedLead.id] : undefined}
         />
 
         {showScoreModal && (

@@ -1700,6 +1700,153 @@ app.post("/debug/apply-score", async (req: Request, res: Response) => {
     });
   }
 });
+
+// POST /api/call/start/:leadId - Mock call start
+apiRoutes.post("/call/start/:leadId", async (req: Request, res: Response) => {
+  try {
+    const { leadId } = req.params;
+
+    if (!leadId) {
+      res.status(400).json({ ok: false, error: "leadId is required" });
+      return;
+    }
+
+    const campaignContact = await prisma.campaignContact.findUnique({
+      where: { id: leadId },
+      select: { id: true, campaignId: true },
+    });
+
+    if (!campaignContact) {
+      res.status(404).json({ ok: false, error: "Lead not found" });
+      return;
+    }
+
+    const call = await prisma.call.create({
+      data: {
+        campaignId: campaignContact.campaignId,
+        campaignContactId: campaignContact.id,
+        status: "STARTED",
+        interest: "NONE",
+        summary: "Mock call started.",
+      },
+    });
+
+    await prisma.campaignContact.update({
+      where: { id: campaignContact.id },
+      data: { lastCallAt: new Date() },
+    });
+
+    res.status(201).json({ ok: true, call });
+  } catch (err: any) {
+    console.error("Mock start call error:", err?.message || err);
+    res.status(500).json({ ok: false, error: "Failed to start call" });
+  }
+});
+
+// POST /api/call/end/:callId - Mock call end
+apiRoutes.post("/call/end/:callId", async (req: Request, res: Response) => {
+  try {
+    const { callId } = req.params;
+
+    if (!callId) {
+      res.status(400).json({ ok: false, error: "callId is required" });
+      return;
+    }
+
+    const existingCall = await prisma.call.findUnique({
+      where: { id: callId },
+      include: { campaignContact: true },
+    });
+
+    if (!existingCall) {
+      res.status(404).json({ ok: false, error: "Call not found" });
+      return;
+    }
+
+    if (existingCall.endedAt) {
+      res.status(200).json({ ok: true, call: existingCall });
+      return;
+    }
+
+    const pickedUp = Math.random() < 0.7;
+    const durationSeconds = 120;
+
+    let status: "COMPLETED" | "NO_ANSWER";
+    let interest: "NONE" | "LOW" | "MEDIUM" | "HIGH";
+    let summary: string;
+
+    if (!pickedUp) {
+      status = "NO_ANSWER";
+      interest = "NONE";
+      summary = "No answer. Follow up later.";
+    } else {
+      const interestOptions = ["LOW", "MEDIUM", "HIGH"] as const;
+      interest = interestOptions[Math.floor(Math.random() * interestOptions.length)];
+      status = "COMPLETED";
+      summary =
+        interest === "HIGH"
+          ? "Lead showed high interest and asked for next steps."
+          : interest === "MEDIUM"
+          ? "Lead showed moderate interest and asked basic questions."
+          : "Lead showed low interest and requested a later follow-up.";
+    }
+
+    const updatedCall = await prisma.call.update({
+      where: { id: existingCall.id },
+      data: {
+        status,
+        interest,
+        summary,
+        durationSeconds,
+        endedAt: new Date(),
+      },
+    });
+
+    if (existingCall.campaignContactId) {
+      let leadStatus: LeadStatus | null = null;
+      if (pickedUp) {
+        leadStatus =
+          interest === "HIGH" ? "HOT" : interest === "MEDIUM" ? "WARM" : "COLD";
+      }
+
+      await prisma.campaignContact.update({
+        where: { id: existingCall.campaignContactId },
+        data: {
+          lastCallAt: new Date(),
+          ...(leadStatus ? { status: leadStatus } : {}),
+        },
+      });
+    }
+
+    res.status(200).json({ ok: true, call: updatedCall });
+  } catch (err: any) {
+    console.error("Mock end call error:", err?.message || err);
+    res.status(500).json({ ok: false, error: "Failed to end call" });
+  }
+});
+
+// GET /api/calls/:campaignId - List calls for a campaign
+apiRoutes.get("/calls/:campaignId", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      res.status(400).json({ ok: false, error: "campaignId is required" });
+      return;
+    }
+
+    const calls = await prisma.call.findMany({
+      where: { campaignId },
+      orderBy: { startedAt: "desc" },
+    });
+
+    res.status(200).json({ ok: true, calls });
+  } catch (err: any) {
+    console.error("Fetch calls error:", err?.message || err);
+    res.status(500).json({ ok: false, error: "Failed to fetch calls" });
+  }
+});
+
 // GET /api/campaigns
 apiRoutes.get("/campaigns", async (req: Request, res: Response) => {
   try {
