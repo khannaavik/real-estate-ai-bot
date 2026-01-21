@@ -60,6 +60,7 @@ function getTwilioClient() {
 }
 
 const app = express();
+const apiRoutes = express.Router();
 
 // Server start time for uptime calculation (zero-dependency)
 const serverStartTime = Date.now();
@@ -135,8 +136,9 @@ declare global {
   }
 }
 
-// Apply Clerk auth middleware ONLY to /api/campaigns routes
-app.use('/api/campaigns', clerkAuthMiddleware);
+// Apply Clerk auth middleware before API routes
+app.use(clerkAuthMiddleware);
+app.use("/api", apiRoutes);
 
 // SSE endpoint for real-time updates
 app.get('/events', (req: Request, res: Response) => {
@@ -1714,7 +1716,7 @@ app.post("/debug/apply-score", async (req: Request, res: Response) => {
   }
 });
 // GET /api/campaigns
-app.get("/api/campaigns", async (req: Request, res: Response) => {
+apiRoutes.get("/campaigns", async (req: Request, res: Response) => {
   try {
     // Get userId from Clerk auth middleware (should always be present if middleware passed)
     const userId = req.auth?.userId;
@@ -1793,7 +1795,7 @@ app.get("/api/campaigns", async (req: Request, res: Response) => {
 });
 
 // POST /api/campaigns/transcribe-audio - Transcribe audio file
-app.post("/api/campaigns/transcribe-audio", upload.single('audio'), async (req: Request, res: Response) => {
+apiRoutes.post("/campaigns/transcribe-audio", upload.single('audio'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -1826,7 +1828,7 @@ app.post("/api/campaigns/transcribe-audio", upload.single('audio'), async (req: 
 });
 
 // POST /api/campaigns/generate-knowledge - Generate structured knowledge from transcript
-app.post("/api/campaigns/generate-knowledge", async (req: Request, res: Response) => {
+apiRoutes.post("/campaigns/generate-knowledge", async (req: Request, res: Response) => {
   try {
     const { transcript } = req.body as {
       transcript: string;
@@ -1888,7 +1890,7 @@ app.post("/api/campaigns/generate-knowledge", async (req: Request, res: Response
 });
 
 // POST /api/campaigns - Create new campaign
-app.post("/api/campaigns", async (req: Request, res: Response) => {
+apiRoutes.post("/campaigns", async (req: Request, res: Response) => {
   // LOGGING AT THE VERY TOP - BEFORE ANY VALIDATION
   console.log('[POST /api/campaigns] ===== REQUEST START =====');
   console.log('[POST /api/campaigns] req.path:', req.path);
@@ -2684,7 +2686,7 @@ app.get("/learning/patterns/:campaignId", async (req: Request, res: Response) =>
 });
 
 // GET /api/campaigns/:id/contacts
-app.get("/api/campaigns/:id/contacts", async (req: Request, res: Response) => {
+apiRoutes.get("/campaigns/:id/contacts", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     

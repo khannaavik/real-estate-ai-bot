@@ -16,7 +16,7 @@ export async function clerkAuthMiddleware(
   try {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader?.startsWith("Bearer ")) {
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       res.status(401).json({ ok: false, error: "Unauthorized" });
       return;
     }
@@ -24,7 +24,7 @@ export async function clerkAuthMiddleware(
     const token = authHeader.slice(7);
     console.log("[CLERK AUTH] Verifying token...");
 
-    const { payload } = await verifyToken(token, {});
+    const { payload } = await verifyToken(token);
 
     if (!payload) {
       res.status(401).json({ ok: false, error: "Invalid token" });
@@ -48,8 +48,8 @@ export async function clerkAuthMiddleware(
 
     console.log("[CLERK AUTH] ✓ Authenticated:", clerkUserId);
     next();
-  } catch (err) {
-    console.error("[CLERK AUTH] ✗ Auth failed:", err);
+  } catch (error) {
+    console.error("[CLERK AUTH] ✗ Authentication failed:", error);
     res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 }
