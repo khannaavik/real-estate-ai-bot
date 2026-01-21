@@ -1280,7 +1280,7 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const res = await apiFetch(`${API_BASE}/call/start/${campaignContactId}`, { method: "POST" });
+      const res = await apiFetch(`${API_BASE}/call/start/${campaignContactId}`);
       setToast((res && (res as any).message) || "Call started — ringing the contact");
       if (selectedCampaign) openCampaign(selectedCampaign);
     } catch (err: any) {
