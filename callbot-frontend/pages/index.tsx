@@ -1,6 +1,5 @@
 // pages/index.tsx
 import React, { useEffect, useState, useRef } from "react";
-import { useAuth, SignInButton, UserButton } from "@clerk/nextjs";
 import { useRouter } from "next/router";
 import { getApiBaseUrl, authenticatedFetch } from "../utils/api";
 import { useLiveEvents, type SSEEvent } from "../hooks/useLiveEvents";
@@ -20,18 +19,18 @@ type Campaign = {
   hotLeadsCount?: number;
 };
 
-async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 8000, token?: string | null) {
+async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 8000) {
   const url = typeof input === 'string' ? input : input.toString();
   console.log("[FETCH] Request:", init?.method || 'GET', url);
-  console.log("[FETCH] Has token:", !!token);
+  const pin = typeof window !== 'undefined' ? localStorage.getItem('dashboard_pin') : null;
+  console.log("[FETCH] Has PIN:", !!pin);
   
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    // Conditionally add Authorization header if token is provided
     const headers: HeadersInit = {
       ...(init?.headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(pin ? { "x-dashboard-pin": pin } : {}),
     };
     
     const res = await fetch(input, { ...init, headers, signal: controller.signal });
@@ -63,8 +62,6 @@ async function safeFetch(input: RequestInfo, init?: RequestInit, timeoutMs = 800
 
 export default function Home() {
   const router = useRouter();
-  const { getToken, isLoaded, isSignedIn } = useAuth();
-  
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [contacts, setContacts] = useState<CampaignContact[]>([]);
@@ -76,6 +73,9 @@ export default function Home() {
   const [durationSeconds, setDurationSeconds] = useState<number>(90);
   const [backendHealth, setBackendHealth] = useState<'checking' | 'online' | 'offline'>('checking');
   const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'required'>('checking');
+  const [pinRequired, setPinRequired] = useState(true);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<CampaignContact | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const previousFocusElementRef = React.useRef<HTMLElement | null>(null);
@@ -263,6 +263,18 @@ export default function Home() {
     }
   }, []);
 
+  // Load dashboard PIN from localStorage
+  useEffect(() => {
+    const savedPin = localStorage.getItem('dashboard_pin');
+    if (savedPin) {
+      setPinRequired(false);
+      setAuthStatus('authenticated');
+    } else {
+      setPinRequired(true);
+      setAuthStatus('required');
+    }
+  }, []);
+
   // Wrapper to sync mockMode to localStorage
   const setMockMode = (value: boolean | ((prev: boolean) => boolean)) => {
     setMockModeState((prev) => {
@@ -276,34 +288,16 @@ export default function Home() {
 
   const API_BASE = getApiBaseUrl();
 
-  // Centralized fetch helper that automatically attaches auth token
-  // This ensures Clerk is loaded and user is signed in before making API calls
+  // Centralized fetch helper that automatically attaches dashboard PIN
   const apiFetch = async (url: string, options?: RequestInit, timeoutMs = 8000) => {
-    // Wait for Clerk to load
-    if (!isLoaded) {
-      console.warn("[API] Clerk not loaded yet, waiting...");
-      throw new Error("Clerk not loaded");
-    }
-
-    // Check if user is signed in
-    if (!isSignedIn) {
-      console.warn("[API] User not signed in");
+    if (pinRequired) {
       setAuthStatus('required');
-      throw new Error("Authentication required: Please sign in");
+      throw new Error("Authentication required: PIN missing");
     }
 
     try {
-      // Get token immediately before fetch
-      const token = await getToken();
-      if (!token) {
-        console.error("[API] getToken() returned null - user may not be authenticated");
-        setAuthStatus('required');
-        throw new Error("Authentication required: No token available");
-      }
-      
-      console.log("[API] Token obtained, making authenticated request to:", url);
-      // Use the centralized authenticatedFetch from utils/api.ts
-      return await authenticatedFetch(url, options, token, timeoutMs);
+      console.log("[API] PIN present, making authenticated request to:", url);
+      return await authenticatedFetch(url, options, undefined, timeoutMs);
     } catch (err: any) {
       console.error("[API] Request failed:", err?.message || err);
       
@@ -1115,42 +1109,27 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [API_BASE, mockMode]);
 
-  // Auth gating: Redirect to sign-in if not signed in (after Clerk loads)
+  // Auth gating: Require PIN before loading campaigns
   useEffect(() => {
-    if (!isLoaded) {
-      // Wait for Clerk to load
-      return;
-    }
-
-    if (!isSignedIn) {
-      console.log("[AUTH] User not signed in, redirecting to /sign-in");
+    if (pinRequired) {
       setAuthStatus('required');
       setCampaigns([]);
-      // Redirect to sign-in page
-      router.push('/sign-in');
       return;
     }
 
-    // User is signed in, proceed with normal flow
     setAuthStatus('authenticated');
-  }, [isLoaded, isSignedIn, router]);
+  }, [pinRequired]);
 
-  // Fetch campaigns when Clerk is loaded and user is signed in
+  // Fetch campaigns when PIN is present
   useEffect(() => {
-    if (!isLoaded) {
-      console.log("[DIAGNOSTIC] Clerk not loaded yet, waiting...");
+    if (pinRequired) {
       return;
     }
 
-    if (!isSignedIn) {
-      // Don't fetch if not signed in (will redirect)
-      return;
-    }
-
-    console.log("[DIAGNOSTIC] Clerk loaded and user signed in, calling fetchCampaigns");
+    console.log("[DIAGNOSTIC] PIN present, calling fetchCampaigns");
     fetchCampaigns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded, isSignedIn]);
+  }, [pinRequired]);
 
   // Diagnostic: Log campaigns state changes
   useEffect(() => {
@@ -1221,9 +1200,9 @@ export default function Home() {
       // CRITICAL: 401 errors NEVER mark backend offline, NEVER enable mock mode
       // Backend health is ONLY controlled by /health endpoint response
       if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
-        console.error("[FETCH] 401 Unauthorized - Authentication required");
+        console.error("[FETCH] 401 Unauthorized - PIN required");
         setAuthStatus('required');
-        setToast("Authentication required. Please sign in.");
+        setToast("PIN required. Please enter the dashboard PIN.");
         setCampaigns([]);
         // DO NOT set backendHealth - it's controlled ONLY by /health endpoint
         // DO NOT activate mock mode on 401 - auth errors are separate from network errors
@@ -1272,7 +1251,7 @@ export default function Home() {
       // Separate auth errors from network errors
       if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
         setAuthStatus('required');
-        setToast("Authentication required. Please sign in.");
+        setToast("PIN required. Please enter the dashboard PIN.");
         setContacts([]);
         // DO NOT enable mock mode on auth errors
       } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
@@ -1311,7 +1290,7 @@ export default function Home() {
       // Separate auth errors from network errors
       if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
         setAuthStatus('required');
-        setToast("Authentication required. Please sign in.");
+        setToast("PIN required. Please enter the dashboard PIN.");
         // DO NOT enable mock mode on auth errors
       } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
         // Only enable mock mode on network errors
@@ -1540,7 +1519,10 @@ export default function Home() {
       // Separate auth errors from network errors
       if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
         setAuthStatus('required');
-        setToast("Authentication required. Please sign in.");
+        setToast("PIN required. Please enter the dashboard PIN.");
+      if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
+        setAuthStatus('required');
+        setToast("PIN required. Please enter the dashboard PIN.");
         // DO NOT enable mock mode on auth errors
       } else if (errorMessage.includes('Network error') || errorMessage.includes('timeout') || errorMessage.includes('Failed to fetch')) {
         // Only enable mock mode on network errors
@@ -1552,6 +1534,42 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (pinRequired) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 w-full max-w-sm">
+          <h1 className="text-lg font-semibold text-gray-900 mb-2">Enter Dashboard PIN</h1>
+          <p className="text-sm text-gray-600 mb-4">Temporary access for MVP testing.</p>
+          <input
+            type="password"
+            value={pinInput}
+            onChange={(e) => {
+              setPinInput(e.target.value);
+              setPinError(null);
+            }}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 mb-3"
+            placeholder="PIN"
+          />
+          {pinError && <div className="text-sm text-red-600 mb-3">{pinError}</div>}
+          <button
+            onClick={() => {
+              if (!pinInput.trim()) {
+                setPinError('PIN is required');
+                return;
+              }
+              localStorage.setItem('dashboard_pin', pinInput.trim());
+              setPinRequired(false);
+              setAuthStatus('authenticated');
+            }}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1631,9 +1649,6 @@ export default function Home() {
                 <span className="hidden sm:inline">Refresh</span>
                 <span className="sm:hidden">↻</span>
               </button>
-              {isLoaded && isSignedIn && (
-                <UserButton afterSignOutUrl="/sign-in" />
-              )}
             </div>
           </div>
         </div>
@@ -1644,27 +1659,16 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <span className="text-gray-600 font-medium">Status:</span>
               {/* Auth Status */}
-              {isLoaded && !isSignedIn ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-red-600 font-medium text-xs">Authentication required</span>
-                  <SignInButton mode="modal">
-                    <button className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors">
-                      Sign In
-                    </button>
-                  </SignInButton>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${
-                    authStatus === 'authenticated' ? 'bg-green-500' :
-                    authStatus === 'required' ? 'bg-red-500' :
-                    'bg-yellow-500 animate-pulse'
-                  }`}></span>
-                  <span className="text-gray-700">
-                    Auth {authStatus === 'authenticated' ? 'OK' : authStatus === 'required' ? 'Required' : 'Checking...'}
-                  </span>
-                </div>
-              )}
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${
+                  authStatus === 'authenticated' ? 'bg-green-500' :
+                  authStatus === 'required' ? 'bg-red-500' :
+                  'bg-yellow-500 animate-pulse'
+                }`}></span>
+                <span className="text-gray-700">
+                  PIN {authStatus === 'authenticated' ? 'OK' : authStatus === 'required' ? 'Required' : 'Checking...'}
+                </span>
+              </div>
               {/* Backend Health */}
               <div className="flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full ${
@@ -1707,25 +1711,24 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Auth Required Banner - Show when auth is required, regardless of backend status */}
-      {isLoaded && authStatus === 'required' && (
+      {/* Auth Required Banner - Show when PIN is missing/invalid */}
+      {authStatus === 'required' && (
         <div className="bg-blue-50 border-b border-blue-200 px-4 sm:px-6 py-3">
           <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <span className="text-blue-700 font-medium text-sm">Sign in to load campaigns</span>
+              <span className="text-blue-700 font-medium text-sm">PIN required to load campaigns</span>
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => router.push('/sign-in')}
+                onClick={() => {
+                  localStorage.removeItem('dashboard_pin');
+                  setPinRequired(true);
+                  setAuthStatus('required');
+                }}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
               >
-                Go to Sign In
+                Enter PIN
               </button>
-              <SignInButton mode="modal">
-                <button className="px-4 py-2 text-sm font-medium text-blue-700 bg-white border border-blue-300 rounded-md hover:bg-blue-50 transition-colors">
-                  Sign In (Modal)
-                </button>
-              </SignInButton>
             </div>
           </div>
         </div>
@@ -3574,7 +3577,7 @@ export default function Home() {
                       } catch (err: any) {
                         console.error('Failed to add lead:', err);
                         if (err?.message?.includes('401') || err?.message?.includes('Authentication required')) {
-                          alert('Authentication required. Please sign in.');
+                          alert('PIN required. Please enter the dashboard PIN.');
                         } else {
                           alert('Failed to add lead. Please check your connection.');
                         }

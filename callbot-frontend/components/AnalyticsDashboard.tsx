@@ -1,6 +1,5 @@
 // components/AnalyticsDashboard.tsx
 import React, { useEffect, useState } from 'react';
-import { useAuth } from '@clerk/nextjs';
 import { useLiveEvents, type SSEEvent } from '../hooks/useLiveEvents';
 import { getOutcomeBucketLabel } from '../utils/labelHelpers';
 import { authenticatedFetch, getApiBaseUrl } from '../utils/api';
@@ -56,7 +55,6 @@ interface RecentActivity {
 }
 
 export function AnalyticsDashboard({ campaignId, campaignName, mockMode = false }: AnalyticsDashboardProps) {
-  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [kpis, setKpis] = useState<KPIs | null>(null);
   const [funnel, setFunnel] = useState<FunnelData | null>(null);
   const [batchPerformance, setBatchPerformance] = useState<BatchJob[]>([]);
@@ -114,26 +112,9 @@ export function AnalyticsDashboard({ campaignId, campaignName, mockMode = false 
     }
 
     const fetchAnalytics = async () => {
-      // Wait for Clerk to load
-      if (!isLoaded) {
-        return;
-      }
-
-      // Check if user is signed in
-      if (!isSignedIn) {
-        setError('Authentication required. Please sign in.');
-        setLoading(false);
-        return;
-      }
-
       try {
         setLoading(true);
-        const token = await getToken();
-        if (!token) {
-          throw new Error('Authentication required: No token available');
-        }
-
-        const data = await authenticatedFetch(`${API_BASE}/analytics/overview/${campaignId}`, undefined, token);
+        const data = await authenticatedFetch(`${API_BASE}/analytics/overview/${campaignId}`);
         
         if (data.ok) {
           setKpis(data.kpis);
@@ -150,7 +131,7 @@ export function AnalyticsDashboard({ campaignId, campaignName, mockMode = false 
         
         // Don't treat 401 as a general error - it's an auth issue
         if (errorMessage.includes('401') || errorMessage.includes('Authentication required')) {
-          setError('Authentication required. Please sign in.');
+          setError('PIN required. Please enter the dashboard PIN.');
         }
       } finally {
         setLoading(false);
@@ -158,7 +139,7 @@ export function AnalyticsDashboard({ campaignId, campaignName, mockMode = false 
     };
 
     fetchAnalytics();
-  }, [campaignId, API_BASE, mockMode, isLoaded, isSignedIn, getToken]);
+  }, [campaignId, API_BASE, mockMode]);
 
   // Handle live events for recent activity feed
   const handleLiveEvent = React.useCallback((event: SSEEvent) => {

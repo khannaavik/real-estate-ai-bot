@@ -6,7 +6,7 @@ import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { prisma } from "./prisma";
-import { clerkAuthMiddleware } from './middleware/clerkAuth';
+import { pinAuthMiddleware } from './middleware/pinAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
 type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";
 import { determineLeadStatusFromTranscript, extractConversationMemory, decideScriptMode, decideObjectionStrategy, type ScriptMode as LeadScoringScriptMode, type ObjectionStrategy } from "./leadScoring";
@@ -136,9 +136,8 @@ declare global {
   }
 }
 
-// Apply Clerk auth middleware before API routes
-app.use(clerkAuthMiddleware);
-app.use("/api", apiRoutes);
+// Apply PIN auth middleware before API routes
+app.use("/api", pinAuthMiddleware, apiRoutes);
 
 // SSE endpoint for real-time updates
 app.get('/events', (req: Request, res: Response) => {

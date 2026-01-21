@@ -1,7 +1,6 @@
 // pages/analytics.tsx
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
-import { useAuth } from '@clerk/nextjs';
 import { AnalyticsDashboard } from '../components/AnalyticsDashboard';
 import { authenticatedFetch, getApiBaseUrl } from '../utils/api';
 
@@ -10,10 +9,12 @@ type Campaign = { id: string; name: string; propertyId: string };
 export default function AnalyticsPage() {
   const router = useRouter();
   const { campaignId } = router.query;
-  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [mockMode, setMockMode] = useState<boolean>(false);
+  const [pinRequired, setPinRequired] = useState(true);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
 
   const API_BASE = getApiBaseUrl();
 
@@ -25,6 +26,14 @@ export default function AnalyticsPage() {
     }
   }, []);
 
+  // Load dashboard PIN from localStorage
+  useEffect(() => {
+    const savedPin = localStorage.getItem('dashboard_pin');
+    if (savedPin) {
+      setPinRequired(false);
+    }
+  }, []);
+
   // Fetch campaign details
   useEffect(() => {
     if (!campaignId || typeof campaignId !== 'string') {
@@ -32,13 +41,7 @@ export default function AnalyticsPage() {
       return;
     }
 
-    // Wait for Clerk to load
-    if (!isLoaded) {
-      return;
-    }
-
-    // Check if user is signed in
-    if (!isSignedIn) {
+    if (pinRequired) {
       setLoading(false);
       return;
     }
@@ -55,14 +58,7 @@ export default function AnalyticsPage() {
           return;
         }
 
-        const token = await getToken();
-        if (!token) {
-          console.error('No token available');
-          setLoading(false);
-          return;
-        }
-
-        const data = await authenticatedFetch(`${API_BASE}/api/campaigns`, undefined, token);
+        const data = await authenticatedFetch(`${API_BASE}/api/campaigns`);
         const campaigns = Array.isArray(data) ? data : data?.campaigns || [];
         const foundCampaign = campaigns.find((c: Campaign) => c.id === campaignId);
         
@@ -87,7 +83,42 @@ export default function AnalyticsPage() {
     };
 
     fetchCampaign();
-  }, [campaignId, API_BASE, mockMode, isLoaded, isSignedIn, getToken]);
+  }, [campaignId, API_BASE, mockMode, pinRequired]);
+
+  if (pinRequired) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 w-full max-w-sm">
+          <h1 className="text-lg font-semibold text-gray-900 mb-2">Enter Dashboard PIN</h1>
+          <p className="text-sm text-gray-600 mb-4">Temporary access for MVP testing.</p>
+          <input
+            type="password"
+            value={pinInput}
+            onChange={(e) => {
+              setPinInput(e.target.value);
+              setPinError(null);
+            }}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 mb-3"
+            placeholder="PIN"
+          />
+          {pinError && <div className="text-sm text-red-600 mb-3">{pinError}</div>}
+          <button
+            onClick={() => {
+              if (!pinInput.trim()) {
+                setPinError('PIN is required');
+                return;
+              }
+              localStorage.setItem('dashboard_pin', pinInput.trim());
+              setPinRequired(false);
+            }}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -166,26 +197,14 @@ export default function AnalyticsPage() {
               </div>
               <button
                 onClick={async () => {
-                  // Check Clerk state
-                  if (!isLoaded || !isSignedIn) {
-                    alert('Please sign in to start batch calls.');
-                    return;
-                  }
-
                   try {
-                    const token = await getToken();
-                    if (!token) {
-                      alert('Authentication required. Please sign in.');
-                      return;
-                    }
-
                     const data = await authenticatedFetch(`${API_BASE}/batch/start/${campaignId}`, {
                       method: 'POST',
                       body: JSON.stringify({
                         cooldownHours: 24,
                         maxRetries: 2,
                       }),
-                    }, token);
+                    });
                     if (data.ok) {
                       alert(`Batch call started: ${data.totalLeads} leads queued`);
                       // Refresh page to show updated status
@@ -196,7 +215,7 @@ export default function AnalyticsPage() {
                   } catch (err: any) {
                     console.error('Failed to start batch:', err);
                     if (err?.message?.includes('401') || err?.message?.includes('Authentication required')) {
-                      alert('Authentication required. Please sign in.');
+                      alert('PIN required. Please enter the dashboard PIN.');
                     } else {
                       alert('Failed to start batch call. See console for details.');
                     }

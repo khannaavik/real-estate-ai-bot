@@ -1,6 +1,5 @@
 // components/LeadDrawer.tsx
 import React, { useEffect, useRef, useState } from 'react';
-import { useAuth } from '@clerk/nextjs';
 import { LeadStatusBadge } from './LeadStatusBadge';
 import { LeadTimelineEvent, type LeadStatus } from '../types/lead';
 import { getOutcomeBucketLabel, getRecommendedNextAction, getLastCallSummary } from '../utils/labelHelpers';
@@ -38,29 +37,14 @@ export function LeadDrawer({
   isReconnecting = false,
   sseError = null,
 }: LeadDrawerProps) {
-  const { getToken, isLoaded, isSignedIn } = useAuth();
   const API_BASE = getApiBaseUrl();
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   
   // Helper function for authenticated requests
-  // Ensures Clerk is loaded and user is signed in before making requests
+  // Uses dashboard PIN from localStorage
   const makeAuthenticatedRequest = async (url: string, options?: RequestInit) => {
-    // Check Clerk state
-    if (!isLoaded) {
-      throw new Error('Clerk not loaded');
-    }
-
-    if (!isSignedIn) {
-      throw new Error('Authentication required: Please sign in');
-    }
-
-    const token = await getToken();
-    if (!token) {
-      throw new Error('Authentication required: No token available');
-    }
-
-    return await authenticatedFetch(url, options, token);
+    return await authenticatedFetch(url, options);
   };
   const [timelineEvents, setTimelineEvents] = useState<LeadTimelineEvent[]>([]);
   const [displayLead, setDisplayLead] = useState<CampaignContact | null>(lead);
@@ -1357,7 +1341,7 @@ export function LeadDrawer({
                             } catch (err: any) {
                               console.error('Failed to save override:', err);
                               if (err?.message?.includes('401') || err?.message?.includes('Authentication required')) {
-                                alert('Authentication required. Please sign in.');
+                                alert('PIN required. Please enter the dashboard PIN.');
                               } else {
                                 alert('Failed to save override');
                               }

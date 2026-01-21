@@ -1,6 +1,6 @@
 /**
  * API utility for authenticated backend requests
- * Automatically includes Clerk Bearer token in Authorization header
+ * Automatically includes dashboard PIN in x-dashboard-pin header
  */
 
 /**
@@ -12,14 +12,13 @@ export function getApiBaseUrl(): string {
 
 /**
  * Client-side authenticated fetch helper
- * Use this in React components with useAuth hook
+ * Uses dashboard PIN from localStorage
  * 
  * @param url - The API endpoint URL
  * @param options - Fetch options (method, body, etc.)
- * @param token - Clerk JWT token (obtained via getToken())
  * @param timeoutMs - Request timeout in milliseconds (default: 8000)
  * @throws Error with status code for non-2xx responses
- * @throws Error "Authentication required" if token is missing
+ * @throws Error "Authentication required" if PIN is missing
  * @throws Error "Network error" for connection failures
  */
 export async function authenticatedFetch(
@@ -28,11 +27,10 @@ export async function authenticatedFetch(
   token?: string | null,
   timeoutMs: number = 8000
 ): Promise<any> {
-  // Log token presence for debugging
-  if (!token) {
-    console.warn('[API] No token provided to authenticatedFetch. Request may fail with 401.');
-  } else {
-    console.log('[API] Token present, attaching Authorization header');
+  const dashboardPin =
+    typeof window !== "undefined" ? localStorage.getItem("dashboard_pin") : null;
+  if (!dashboardPin) {
+    console.warn('[API] No dashboard PIN found in localStorage. Request may fail with 401.');
   }
 
   const controller = new AbortController();
@@ -44,13 +42,10 @@ export async function authenticatedFetch(
       ...(options?.headers as Record<string, string> || {}),
     };
 
-    // ALWAYS attach Authorization header if token is provided
-    // Backend expects: Authorization: Bearer <JWT>
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (dashboardPin) {
+      headers['x-dashboard-pin'] = dashboardPin;
     } else {
-      // Log warning but don't throw - let backend return 401
-      console.warn('[API] No token available - request will likely return 401');
+      console.warn('[API] No dashboard PIN available - request will likely return 401');
     }
 
     const response = await fetch(url, {
