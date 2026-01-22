@@ -1875,61 +1875,58 @@ apiRoutes.get("/analytics/overview", async (_req: Request, res: Response) => {
   try {
     const [
       totalCalls,
-      pickedCalls,
+      completedCalls,
       noAnswerCalls,
-      interestGroups,
-      hotCampaignGroups,
+      coldCalls,
+      warmCalls,
+      hotCalls,
       pendingFollowUps,
+      hotLeadCalls,
     ] = await Promise.all([
-      prisma.call.count({ where: { status: "COMPLETED" } }),
+      prisma.call.count(),
       prisma.call.count({ where: { status: "COMPLETED" } }),
       prisma.call.count({ where: { status: "NO_ANSWER" } }),
-      prisma.call.groupBy({
-        by: ["interestLevel"],
-        where: { status: "COMPLETED", interestLevel: { not: null } },
-        _count: { _all: true },
-      }),
-      prisma.call.groupBy({
-        by: ["campaignId"],
-        where: { status: "COMPLETED", interestLevel: "HOT" },
-        _count: { _all: true },
-        orderBy: { _count: { _all: "desc" } },
-        take: 5,
-      }),
-      prisma.callLog.count({
-        where: {
-          resultStatus: "COMPLETED",
-          postCallNextAction: { not: null },
-        },
+      prisma.call.count({ where: { interestLevel: "COLD" } }),
+      prisma.call.count({ where: { interestLevel: "WARM" } }),
+      prisma.call.count({ where: { interestLevel: "HOT" } }),
+      prisma.callLog.count({ where: { postCallNextAction: { not: null } } }),
+      prisma.call.findMany({
+        where: { interestLevel: "HOT" },
+        select: { campaignId: true },
       }),
     ]);
 
-    const interestBreakdown = { cold: 0, warm: 0, hot: 0 };
-    for (const group of interestGroups) {
-      if (group.interestLevel === "COLD") interestBreakdown.cold = group._count._all;
-      if (group.interestLevel === "WARM") interestBreakdown.warm = group._count._all;
-      if (group.interestLevel === "HOT") interestBreakdown.hot = group._count._all;
+    const hotLeadCounts = new Map<string, number>();
+    for (const call of hotLeadCalls) {
+      hotLeadCounts.set(call.campaignId, (hotLeadCounts.get(call.campaignId) || 0) + 1);
     }
 
-    const campaignIds = hotCampaignGroups.map((group) => group.campaignId);
-    const campaignNames = campaignIds.length
+    const campaignIds = Array.from(hotLeadCounts.keys());
+    const campaigns = campaignIds.length
       ? await prisma.campaign.findMany({
           where: { id: { in: campaignIds } },
           select: { id: true, name: true },
         })
       : [];
-    const campaignNameMap = new Map(campaignNames.map((c) => [c.id, c.name]));
+    const campaignNameMap = new Map(campaigns.map((campaign) => [campaign.id, campaign.name]));
 
-    const topCampaigns = hotCampaignGroups.map((group) => ({
-      campaignName: campaignNameMap.get(group.campaignId) || "Unknown Campaign",
-      hotLeads: group._count._all,
-    }));
+    const topCampaigns = campaignIds
+      .map((campaignId) => ({
+        campaignName: campaignNameMap.get(campaignId) || "Unknown Campaign",
+        hotLeads: hotLeadCounts.get(campaignId) || 0,
+      }))
+      .sort((a, b) => b.hotLeads - a.hotLeads)
+      .slice(0, 5);
 
-    res.status(200).json({
+    res.json({
       totalCalls,
-      pickedCalls,
+      pickedCalls: completedCalls,
       noAnswerCalls,
-      interestBreakdown,
+      interestBreakdown: {
+        cold: coldCalls,
+        warm: warmCalls,
+        hot: hotCalls,
+      },
       topCampaigns,
       pendingFollowUps,
     });
