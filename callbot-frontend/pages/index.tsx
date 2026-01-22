@@ -2040,63 +2040,65 @@ export default function Home() {
                     </>
                   )}
                 </div>
-                {selectedCampaign && (
-                  <div className="hidden md:flex gap-2 flex-wrap">
-                    <button
-                      onClick={() => {
-                        if (typeof window !== 'undefined') {
-                          window.location.href = `/analytics?campaignId=${selectedCampaign.id}`;
-                        }
-                      }}
-                      className="px-2 sm:px-3 py-1.5 bg-purple-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-purple-700 transition-colors"
-                      title="View analytics for this campaign"
-                    >
-                      <span className="hidden sm:inline">📊 Analytics</span>
-                      <span className="sm:hidden">📊</span>
-                    </button>
-                    <button
-                      onClick={() => setShowCsvUploadModal(true)}
-                      className="px-2 sm:px-3 py-1.5 bg-green-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      disabled={isUploadingCsv}
-                    >
-                      <span className="hidden sm:inline">📄 Upload CSV</span>
-                      <span className="sm:hidden">📄</span>
-                    </button>
-                    <button
-                      onClick={() => setShowAddLeadModal(true)}
-                      className="px-2 sm:px-3 py-1.5 bg-blue-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      disabled={isUploadingCsv}
-                    >
-                      <span className="hidden sm:inline">+ Add Lead</span>
-                      <span className="sm:hidden">+</span>
-                    </button>
-                    {/* Start AI Calling Button - Primary */}
-                    {selectedCampaign && (selectedCampaign.totalLeads ?? 0) > 0 && (!batchJob || batchJob.status !== 'RUNNING') && (
+                <div className="hidden md:flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        window.location.href = `/analytics`;
+                      }
+                    }}
+                    className="px-2 sm:px-3 py-1.5 bg-purple-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-purple-700 transition-colors"
+                    title="View analytics overview"
+                  >
+                    <span className="hidden sm:inline">📊 Analytics</span>
+                    <span className="sm:hidden">📊</span>
+                  </button>
+                  {selectedCampaign && (
+                    <>
                       <button
-                        onClick={startBatchCall}
-                        disabled={isStartingBatch}
-                        className="px-2 sm:px-3 py-1.5 bg-emerald-600 text-white text-xs sm:text-sm font-semibold rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative group"
-                        title="Start AI calling for all eligible leads"
+                        onClick={() => setShowCsvUploadModal(true)}
+                        className="px-2 sm:px-3 py-1.5 bg-green-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        disabled={isUploadingCsv}
                       >
-                        {isStartingBatch ? (
-                          <>
-                            <svg className="inline-block animate-spin h-3 w-3 sm:h-4 sm:w-4 mr-1" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            <span className="hidden sm:inline">Starting...</span>
-                            <span className="sm:hidden">...</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="hidden sm:inline">🤖 Start AI Calling</span>
-                            <span className="sm:hidden">🤖</span>
-                          </>
-                        )}
+                        <span className="hidden sm:inline">📄 Upload CSV</span>
+                        <span className="sm:hidden">📄</span>
                       </button>
-                    )}
-                  </div>
-                )}
+                      <button
+                        onClick={() => setShowAddLeadModal(true)}
+                        className="px-2 sm:px-3 py-1.5 bg-blue-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        disabled={isUploadingCsv}
+                      >
+                        <span className="hidden sm:inline">+ Add Lead</span>
+                        <span className="sm:hidden">+</span>
+                      </button>
+                      {/* Start AI Calling Button - Primary */}
+                      {selectedCampaign && (selectedCampaign.totalLeads ?? 0) > 0 && (!batchJob || batchJob.status !== 'RUNNING') && (
+                        <button
+                          onClick={startBatchCall}
+                          disabled={isStartingBatch}
+                          className="px-2 sm:px-3 py-1.5 bg-emerald-600 text-white text-xs sm:text-sm font-semibold rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative group"
+                          title="Start AI calling for all eligible leads"
+                        >
+                          {isStartingBatch ? (
+                            <>
+                              <svg className="inline-block animate-spin h-3 w-3 sm:h-4 sm:w-4 mr-1" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                              <span className="hidden sm:inline">Starting...</span>
+                              <span className="sm:hidden">...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="hidden sm:inline">🤖 Start AI Calling</span>
+                              <span className="sm:hidden">🤖</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 

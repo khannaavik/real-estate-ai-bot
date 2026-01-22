@@ -1861,6 +1861,84 @@ apiRoutes.get("/calls/:campaignId", async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/analytics/overview
+apiRoutes.get("/analytics/overview", async (_req: Request, res: Response) => {
+  const emptyResponse = {
+    totalCalls: 0,
+    pickedCalls: 0,
+    noAnswerCalls: 0,
+    interestBreakdown: { cold: 0, warm: 0, hot: 0 },
+    topCampaigns: [],
+    pendingFollowUps: 0,
+  };
+
+  try {
+    const [
+      totalCalls,
+      pickedCalls,
+      noAnswerCalls,
+      interestGroups,
+      hotCampaignGroups,
+      pendingFollowUps,
+    ] = await Promise.all([
+      prisma.call.count({ where: { status: "COMPLETED" } }),
+      prisma.call.count({ where: { status: "COMPLETED" } }),
+      prisma.call.count({ where: { status: "NO_ANSWER" } }),
+      prisma.call.groupBy({
+        by: ["interestLevel"],
+        where: { status: "COMPLETED", interestLevel: { not: null } },
+        _count: { _all: true },
+      }),
+      prisma.call.groupBy({
+        by: ["campaignId"],
+        where: { status: "COMPLETED", interestLevel: "HOT" },
+        _count: { _all: true },
+        orderBy: { _count: { _all: "desc" } },
+        take: 5,
+      }),
+      prisma.callLog.count({
+        where: {
+          resultStatus: "COMPLETED",
+          postCallNextAction: { not: null },
+        },
+      }),
+    ]);
+
+    const interestBreakdown = { cold: 0, warm: 0, hot: 0 };
+    for (const group of interestGroups) {
+      if (group.interestLevel === "COLD") interestBreakdown.cold = group._count._all;
+      if (group.interestLevel === "WARM") interestBreakdown.warm = group._count._all;
+      if (group.interestLevel === "HOT") interestBreakdown.hot = group._count._all;
+    }
+
+    const campaignIds = hotCampaignGroups.map((group) => group.campaignId);
+    const campaignNames = campaignIds.length
+      ? await prisma.campaign.findMany({
+          where: { id: { in: campaignIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const campaignNameMap = new Map(campaignNames.map((c) => [c.id, c.name]));
+
+    const topCampaigns = hotCampaignGroups.map((group) => ({
+      campaignName: campaignNameMap.get(group.campaignId) || "Unknown Campaign",
+      hotLeads: group._count._all,
+    }));
+
+    res.status(200).json({
+      totalCalls,
+      pickedCalls,
+      noAnswerCalls,
+      interestBreakdown,
+      topCampaigns,
+      pendingFollowUps,
+    });
+  } catch (err: any) {
+    console.error("GET /api/analytics/overview error:", err);
+    res.status(200).json(emptyResponse);
+  }
+});
+
 // GET /api/campaigns
 apiRoutes.get("/campaigns", async (req: Request, res: Response) => {
   try {
