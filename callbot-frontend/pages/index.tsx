@@ -137,6 +137,11 @@ export default function Home() {
   const [csvUploadProgress, setCsvUploadProgress] = useState<string | null>(null);
   const [csvUploadSuccess, setCsvUploadSuccess] = useState<{ leadCount: number } | null>(null);
   const [isStartingBatch, setIsStartingBatch] = useState(false);
+  const [batchStatus, setBatchStatus] = useState<{ total: number; pending: number; inProgress: number; completed: number; failed: number } | null>(null);
+  const [batchStatusError, setBatchStatusError] = useState<string | null>(null);
+  const [lastImportSummary, setLastImportSummary] = useState<{ imported: number; skipped: number } | null>(null);
+  const [isBatchPolling, setIsBatchPolling] = useState(false);
+  const batchPollingRef = useRef<number | null>(null);
   
   // Responsive UI state
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -1414,8 +1419,76 @@ export default function Home() {
     );
   }, [contacts, selectedCampaign]);
 
+  const isBatchRunning = (batchStatus?.pending ?? 0) > 0 || (batchStatus?.inProgress ?? 0) > 0;
+  const showLegacyBatchControls = !!batchJob && !batchStatus;
+  const batchProgressPercent = batchStatus && batchStatus.total > 0
+    ? Math.round(((batchStatus.completed + batchStatus.failed) / batchStatus.total) * 100)
+    : 0;
+
+  async function fetchBatchStatus(): Promise<void> {
+    if (!selectedCampaign || mockMode) return;
+    try {
+      const data: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/batch-status`);
+      if (typeof data?.total === 'number') {
+        setBatchStatus({
+          total: data.total,
+          pending: data.pending ?? 0,
+          inProgress: data.inProgress ?? 0,
+          completed: data.completed ?? 0,
+          failed: data.failed ?? 0,
+        });
+        setBatchStatusError(null);
+      }
+    } catch (err: any) {
+      const errorMessage = err?.message || String(err);
+      console.error("fetchBatchStatus error:", errorMessage);
+      setBatchStatusError(errorMessage);
+    }
+  }
+
+  const stopBatchPolling = () => {
+    if (batchPollingRef.current) {
+      window.clearInterval(batchPollingRef.current);
+      batchPollingRef.current = null;
+    }
+    setIsBatchPolling(false);
+  };
+
+  const startBatchPolling = () => {
+    if (batchPollingRef.current) return;
+    batchPollingRef.current = window.setInterval(() => {
+      fetchBatchStatus();
+    }, 4000);
+    setIsBatchPolling(true);
+  };
+
+  useEffect(() => {
+    if (!selectedCampaign || mockMode) {
+      stopBatchPolling();
+      setBatchStatus(null);
+      setLastImportSummary(null);
+      return;
+    }
+
+    setLastImportSummary(null);
+    fetchBatchStatus();
+
+    return () => {
+      stopBatchPolling();
+    };
+  }, [selectedCampaign?.id, mockMode]);
+
+  useEffect(() => {
+    if (!selectedCampaign || mockMode) return;
+    if ((batchStatus?.pending ?? 0) > 0 || (batchStatus?.inProgress ?? 0) > 0) {
+      startBatchPolling();
+    } else {
+      stopBatchPolling();
+    }
+  }, [batchStatus?.pending, batchStatus?.inProgress, selectedCampaign?.id, mockMode]);
+
   // Sticky CTA visibility and animation state
-  const showStickyCTA = selectedCampaign && hasEligibleLeads && (!batchJob || batchJob.status !== 'RUNNING');
+  const showStickyCTA = selectedCampaign && hasEligibleLeads && !isBatchRunning;
   const [stickyCTAAnimating, setStickyCTAAnimating] = useState(false);
 
   // Toggle low-interest leads visibility
@@ -1468,8 +1541,8 @@ export default function Home() {
       return;
     }
 
-    if (batchJob && (batchJob.status === 'RUNNING' || batchJob.status === 'PAUSED')) {
-      setToast('A batch is already running. Please pause or stop it first.');
+    if (isBatchRunning) {
+      setToast('A batch is already running. Please wait for it to complete.');
       return;
     }
 
@@ -1480,49 +1553,35 @@ export default function Home() {
 
     setIsStartingBatch(true);
     setCsvUploadSuccessBanner(null); // Hide CSV success banner when starting batch
+    setBatchStatusError(null);
     try {
       if (mockMode) {
         setToast('(Mock) Batch call started');
-        setBatchJob({
-          batchJobId: 'mock-batch-' + Date.now(),
-          status: 'RUNNING',
-          currentIndex: 0,
-          totalLeads: contacts.filter(cc => 
-            cc.status === 'NOT_PICK' || cc.status === 'COLD' || cc.status === 'WARM'
-          ).length,
-        });
-        setIsStartingBatch(false);
+        const total = contacts.filter(cc =>
+          cc.status === 'NOT_PICK' || cc.status === 'COLD' || cc.status === 'WARM'
+        ).length;
+        setBatchStatus({ total, pending: total, inProgress: 0, completed: 0, failed: 0 });
         return;
       }
 
-      const res = await apiFetch(`${API_BASE}/batch/start/${selectedCampaign.id}`, {
+      const data: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/start-batch`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cooldownHours: 24,
-          maxRetries: 2,
-        }),
       });
 
-      const data = res as any;
-      if (data.ok) {
-        setToast('AI calling started. Leads will be auto-sorted.');
-        setBatchJob({
-          batchJobId: data.batchJobId,
-          status: 'RUNNING',
-          currentIndex: 0,
-          totalLeads: data.totalLeads,
-        });
-        // Refresh contacts to see updated statuses
+      if (data?.ok) {
+        const queued = typeof data.queued === 'number' ? data.queued : 0;
+        setToast('Batch calling started');
+        fetchBatchStatus();
         if (selectedCampaign) {
           openCampaign(selectedCampaign);
         }
       } else {
-        setToast(data.error || data.message || 'Failed to start batch call');
+        setToast(data?.error || data?.message || 'Failed to start batch call');
       }
     } catch (err: any) {
-      console.error('startBatchCall error:', err?.message || err);
-      setToast('Failed to start batch call. See console for details.');
+      const errorMessage = err?.message || String(err);
+      console.error('startBatchCall error:', errorMessage);
+      setToast(errorMessage.includes('HTTP') ? errorMessage : 'Failed to start batch call.');
     } finally {
       setIsStartingBatch(false);
     }
@@ -2072,10 +2131,10 @@ export default function Home() {
                         <span className="sm:hidden">+</span>
                       </button>
                       {/* Start AI Calling Button - Primary */}
-                      {selectedCampaign && (selectedCampaign.totalLeads ?? 0) > 0 && (!batchJob || batchJob.status !== 'RUNNING') && (
+                      {selectedCampaign && (selectedCampaign.totalLeads ?? 0) > 0 && !isBatchRunning && (
                         <button
                           onClick={startBatchCall}
-                          disabled={isStartingBatch}
+                          disabled={isStartingBatch || isBatchRunning}
                           className="px-2 sm:px-3 py-1.5 bg-emerald-600 text-white text-xs sm:text-sm font-semibold rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative group"
                           title="Start AI calling for all eligible leads"
                         >
@@ -2101,6 +2160,41 @@ export default function Home() {
                 </div>
               </div>
             </div>
+
+            {selectedCampaign && (
+              <div className="border-b border-gray-200 bg-white px-4 sm:px-6 py-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-gray-600">
+                  <div>
+                    Imported: {lastImportSummary ? lastImportSummary.imported : 0}
+                    {lastImportSummary ? ` • Skipped ${lastImportSummary.skipped}` : ''}
+                  </div>
+                  <div>
+                    Pending {batchStatus?.pending ?? 0} • In Progress {batchStatus?.inProgress ?? 0} • Completed {batchStatus?.completed ?? 0} • Failed {batchStatus?.failed ?? 0}
+                  </div>
+                  <div className="text-gray-500">
+                    {isBatchRunning ? 'Batch running' : 'Idle'}
+                    {isBatchPolling ? ' • Live' : ''}
+                  </div>
+                </div>
+                <div className="mt-2 h-2 w-full rounded bg-gray-200 overflow-hidden">
+                  <div
+                    className="h-2 bg-emerald-500 rounded"
+                    style={{ width: `${batchProgressPercent}%` }}
+                  />
+                </div>
+                {batchStatusError && (
+                  <div className="mt-2 flex items-center justify-between gap-3 text-xs text-red-600">
+                    <span className="truncate">{batchStatusError}</span>
+                    <button
+                      onClick={() => setBatchStatusError(null)}
+                      className="text-red-600 hover:text-red-700"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Batch Activity Log Panel - Keep this for detailed logs */}
 
@@ -2142,7 +2236,7 @@ export default function Home() {
             {/* Scrollable Content Area */}
             <div className={`overflow-y-auto h-[calc(100vh-240px)] px-6 py-4 ${
               // Add bottom padding on desktop when sticky CTA is visible
-              selectedCampaign && hasEligibleLeads && (!batchJob || batchJob.status !== 'RUNNING')
+              selectedCampaign && hasEligibleLeads && !isBatchRunning
                 ? 'lg:pb-24'
                 : ''
             }`}>
@@ -2188,12 +2282,13 @@ export default function Home() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <p className="text-sm font-semibold text-green-900">
-                          Leads uploaded successfully
+                          Leads imported successfully
+                          {lastImportSummary ? ` • ${lastImportSummary.imported} imported, ${lastImportSummary.skipped} skipped` : ''}
                         </p>
                       </div>
                       <button
                         onClick={startBatchCall}
-                        disabled={isStartingBatch || !!(batchJob && (batchJob.status === 'RUNNING' || batchJob.status === 'PAUSED'))}
+                        disabled={isStartingBatch || isBatchRunning}
                         className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                       >
                         {isStartingBatch ? (
@@ -2490,7 +2585,7 @@ export default function Home() {
             <div className="h-full px-4 flex items-center">
               <button
                 onClick={startBatchCall}
-                disabled={isStartingBatch}
+                disabled={isStartingBatch || isBatchRunning}
                 className="w-full h-full bg-emerald-600 text-white text-base font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
                 style={{
                   transition: prefersReducedMotion ? 'none' : 'all 120ms ease-out'
@@ -2529,7 +2624,7 @@ export default function Home() {
             <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-4 min-w-[280px]">
               <button
                 onClick={startBatchCall}
-                disabled={isStartingBatch}
+                disabled={isStartingBatch || isBatchRunning}
                 className="w-full px-6 py-3 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 active:scale-[0.97]"
                 style={{
                   transition: prefersReducedMotion ? 'none' : 'all 120ms ease-out'
@@ -2563,14 +2658,15 @@ export default function Home() {
       <div
         className="fixed bottom-0 left-0 right-0 z-50"
         style={{
-          opacity: batchJob ? 1 : 0,
-          transform: batchJob ? 'translateY(0)' : 'translateY(100%)',
+          opacity: showLegacyBatchControls ? 1 : 0,
+          transform: showLegacyBatchControls ? 'translateY(0)' : 'translateY(100%)',
           transition: prefersReducedMotion 
             ? 'none' 
             : 'opacity 200ms ease-out, transform 200ms ease-out',
-          pointerEvents: batchJob ? 'auto' : 'none'
+          pointerEvents: showLegacyBatchControls ? 'auto' : 'none'
         }}
       >
+        {showLegacyBatchControls && (
         <BatchControlBar
           batchJob={batchJob}
           isLoading={batchActionLoading}
@@ -2636,8 +2732,9 @@ export default function Home() {
               setBatchActionLoading(false);
             }
         }}
-        mockMode={mockMode}
-      />
+          mockMode={mockMode}
+        />
+        )}
       </div>
 
       {toast && <div className="fixed right-6 bottom-6 bg-black text-white px-4 py-2 rounded shadow z-50">{toast}</div>}
@@ -2665,7 +2762,7 @@ export default function Home() {
                     disabled={isUploadingCsv}
                   />
                   <p className="mt-1 text-xs text-gray-500">
-                    CSV must have columns: <strong>name</strong>, <strong>phone</strong> (optional: <strong>source</strong>)
+                    CSV must have columns: <strong>name</strong>, <strong>phone</strong>
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
                     Phone numbers must be in E.164 format (e.g., +919876543210)
@@ -2686,7 +2783,8 @@ export default function Home() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                       <p className="text-sm font-semibold text-green-900">
-                        Successfully uploaded {csvUploadSuccess.leadCount} {csvUploadSuccess.leadCount === 1 ? 'lead' : 'leads'}!
+                        Successfully imported {csvUploadSuccess.leadCount} {csvUploadSuccess.leadCount === 1 ? 'lead' : 'leads'}!
+                        {lastImportSummary ? ` (${lastImportSummary.skipped} skipped)` : ''}
                       </p>
                     </div>
                     <button
@@ -2705,7 +2803,7 @@ export default function Home() {
                           }, 500);
                         }
                       }}
-                      disabled={isStartingBatch || !!(batchJob && (batchJob.status === 'RUNNING' || batchJob.status === 'PAUSED'))}
+                      disabled={isStartingBatch || isBatchRunning}
                     >
                       {isStartingBatch ? 'Starting...' : '🤖 Start AI Calling'}
                     </button>
@@ -2736,6 +2834,7 @@ export default function Home() {
                       if (mockMode) {
                         setCsvUploadSuccess({ leadCount: 10 }); // Mock count
                         setCsvUploadProgress(null);
+                        setLastImportSummary({ imported: 10, skipped: 0 });
                         return;
                       }
 
@@ -2746,35 +2845,23 @@ export default function Home() {
                         const formData = new FormData();
                         formData.append('csv', csvFile);
 
-                        const res = await apiFetch(`${API_BASE}/leads/upload-csv/${selectedCampaign.id}`, {
+                        const data: any = await safeFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/import-csv`, {
                           method: 'POST',
                           body: formData,
                           // Do NOT set Content-Type header - browser will set it with boundary
                         });
 
-                        // Check if response is ok
-                        if (!res.ok) {
-                          const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
-                          setCsvUploadProgress(`Error: ${errorData.error || errorData.details || 'Upload failed'}`);
-                          return;
-                        }
-
-                        const data = await res.json();
-                        if (data.ok) {
-                          const { totalRows, created, duplicates, invalidRows } = data;
-                          setCsvUploadSuccess({ leadCount: created });
-                          setCsvUploadSuccessBanner({ leadCount: created });
-                          setToast(
-                            `CSV upload complete: ${created} created, ${duplicates} duplicates, ${invalidRows} invalid out of ${totalRows} total`
-                          );
-                          setCsvUploadProgress(null);
-                          setShowCsvUploadModal(false);
-                          // Refresh contacts to see new leads
-                          if (selectedCampaign) {
-                            await openCampaign(selectedCampaign);
-                          }
-                        } else {
-                          setCsvUploadProgress(`Error: ${data.error || data.details || 'Upload failed'}`);
+                        const imported = typeof data?.imported === 'number' ? data.imported : 0;
+                        const skipped = typeof data?.skipped === 'number' ? data.skipped : 0;
+                        setCsvUploadSuccess({ leadCount: imported });
+                        setCsvUploadSuccessBanner({ leadCount: imported });
+                        setLastImportSummary({ imported, skipped });
+                        setToast(`CSV import complete: ${imported} imported, ${skipped} skipped`);
+                        setCsvUploadProgress(null);
+                        setShowCsvUploadModal(false);
+                        if (selectedCampaign) {
+                          await openCampaign(selectedCampaign);
+                          fetchBatchStatus();
                         }
                       } catch (err: any) {
                         console.error('Failed to upload CSV:', err);

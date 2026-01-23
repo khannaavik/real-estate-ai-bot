@@ -30,6 +30,7 @@ import { selectAdaptiveStrategy, type AdaptiveStrategyContext, selectBestStrateg
 import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMainPitchPoints, getClosingLine, ScriptMode as ConversationScriptMode } from "./conversationStrategy";
 import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCallLive } from "./liveCallMonitor";
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./services/aiCallAnalysis";
+import { startBatchProcessing, resumeActiveBatches } from "./services/batchProcessor";
 
 
 
@@ -314,6 +315,8 @@ async function startServer() {
       console.log(`[STARTUP] ✓ Server is running on port ${PORT}`);
       console.log(`[STARTUP] Environment: ${NODE_ENV}`);
     });
+
+    await resumeActiveBatches();
   } catch (error) {
     console.error('[STARTUP] FATAL: Failed to start server:', error);
     process.exit(1);
@@ -2901,6 +2904,291 @@ app.get("/learning/patterns/:campaignId", async (req: Request, res: Response) =>
     res.status(500).json({
       ok: false,
       error: "Failed to get learning patterns",
+      details: String(err?.message || err),
+    });
+  }
+});
+
+// POST /api/campaigns/:campaignId/import-csv - Import leads via CSV (batch-ready)
+apiRoutes.post("/campaigns/:campaignId/import-csv", upload.single('csv'), async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+    const file = req.file;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    if (!file) {
+      return res.status(400).json({ ok: false, error: "CSV file is required" });
+    }
+
+    const isCsv =
+      file.mimetype === "text/csv" ||
+      file.mimetype === "application/vnd.ms-excel" ||
+      file.originalname.toLowerCase().endsWith(".csv");
+
+    if (!isCsv) {
+      return res.status(400).json({ ok: false, error: "Only CSV files are supported" });
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
+    });
+
+    if (!campaign) {
+      return res.status(404).json({ ok: false, error: "Campaign not found" });
+    }
+
+    let records: any[];
+    try {
+      const csvContent = file.buffer.toString("utf-8");
+      records = parse(csvContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
+    } catch (parseError: any) {
+      return res.status(400).json({
+        ok: false,
+        error: "Failed to parse CSV file",
+        details: parseError?.message || String(parseError),
+      });
+    }
+
+    if (records.length === 0) {
+      return res.status(400).json({ ok: false, error: "CSV file is empty" });
+    }
+
+    if (records.length > 500) {
+      return res.status(400).json({ ok: false, error: "CSV upload exceeds 500 row limit" });
+    }
+
+    const requiredHeaders = ["name", "phone"];
+    const firstRow = records[0] || {};
+    const headers = Object.keys(firstRow).map((h) => h.trim().toLowerCase());
+    const missingHeaders = requiredHeaders.filter((h) => !headers.includes(h));
+
+    if (missingHeaders.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: `Missing required CSV headers: ${missingHeaders.join(", ")}`,
+        foundHeaders: Object.keys(firstRow),
+      });
+    }
+
+    function normalizePhoneToE164(phone: string): string | null {
+      let cleaned = phone.replace(/[\s,\-()]/g, "");
+
+      if (cleaned.startsWith("+")) {
+        cleaned = cleaned.substring(1);
+      }
+
+      if (/^[6-9]\d{9}$/.test(cleaned)) {
+        return `+91${cleaned}`;
+      }
+
+      if (/^0[6-9]\d{9}$/.test(cleaned)) {
+        return `+91${cleaned.substring(1)}`;
+      }
+
+      if (cleaned.startsWith("91") && cleaned.length === 12) {
+        return `+${cleaned}`;
+      }
+
+      if (phone.trim().startsWith("+")) {
+        return phone.trim();
+      }
+
+      return null;
+    }
+
+    const e164Regex = /^\+[1-9]\d{1,14}$/;
+    let imported = 0;
+    let skipped = 0;
+
+    for (const row of records) {
+      const nameKey = Object.keys(row).find((k) => k.trim().toLowerCase() === "name") || "name";
+      const phoneKey = Object.keys(row).find((k) => k.trim().toLowerCase() === "phone") || "phone";
+
+      const name = (row[nameKey] || "").trim();
+      const phoneRaw = (row[phoneKey] || "").trim();
+
+      if (!phoneRaw) {
+        skipped++;
+        continue;
+      }
+
+      const phone = normalizePhoneToE164(phoneRaw);
+      if (!phone || !e164Regex.test(phone)) {
+        skipped++;
+        continue;
+      }
+
+      const existingContact = await prisma.contact.findFirst({
+        where: {
+          phone,
+          userId: campaign.userId,
+        },
+        include: {
+          campaigns: {
+            where: { campaignId },
+          },
+        },
+      });
+
+      if (existingContact && Array.isArray((existingContact as any).campaigns) && (existingContact as any).campaigns.length > 0) {
+        skipped++;
+        continue;
+      }
+
+      const contact = existingContact
+        ? existingContact
+        : await prisma.contact.create({
+            data: {
+              userId: campaign.userId,
+              name: name || "Unknown",
+              phone,
+              source: "CSV",
+            },
+          });
+
+      await prisma.campaignContact.create({
+        data: {
+          campaignId,
+          contactId: contact.id,
+          status: "NOT_PICK",
+          callStatus: "PENDING",
+          extraContext: {
+            batchStatus: "PENDING",
+            batchImportedAt: new Date().toISOString(),
+            source: "CSV",
+          } as any,
+        },
+      });
+
+      imported++;
+    }
+
+    res.json({ imported, skipped });
+  } catch (err: any) {
+    console.error("CSV import error:", err);
+    res.status(500).json({
+      ok: false,
+      error: "Failed to import CSV",
+      details: String(err?.message || err),
+    });
+  }
+});
+
+// POST /api/campaigns/:campaignId/start-batch - Start batch calling (sequential)
+apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true },
+    });
+
+    if (!campaign) {
+      return res.status(404).json({ ok: false, error: "Campaign not found" });
+    }
+
+    await prisma.campaignContact.updateMany({
+      where: { campaignId, callStatus: "IN_PROGRESS" },
+      data: { callStatus: "PENDING" },
+    });
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { batchActive: true },
+    });
+
+    const queued = await prisma.campaignContact.count({
+      where: {
+        campaignId,
+        callStatus: { in: ["PENDING", null as any] },
+      },
+    });
+
+    if (queued === 0) {
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: { batchActive: false },
+      });
+      return res.status(400).json({ ok: false, error: "No PENDING leads found for batch calling" });
+    }
+
+    void startBatchProcessing(campaignId);
+
+    res.json({
+      ok: true,
+      queued,
+      message: "Batch calling started",
+    });
+  } catch (err: any) {
+    console.error("Start batch error:", err);
+    res.status(500).json({
+      ok: false,
+      error: "Failed to start batch calling",
+      details: String(err?.message || err),
+    });
+  }
+});
+
+// GET /api/campaigns/:campaignId/batch-status - Batch call status
+apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true },
+    });
+
+    if (!campaign) {
+      return res.status(404).json({ ok: false, error: "Campaign not found" });
+    }
+
+    const [total, pending, inProgress, completed, failed] = await Promise.all([
+      prisma.campaignContact.count({
+        where: { campaignId },
+      }),
+      prisma.campaignContact.count({
+        where: { campaignId, callStatus: { in: ["PENDING", null as any] } },
+      }),
+      prisma.campaignContact.count({
+        where: { campaignId, callStatus: "IN_PROGRESS" },
+      }),
+      prisma.campaignContact.count({
+        where: { campaignId, callStatus: "COMPLETED" },
+      }),
+      prisma.campaignContact.count({
+        where: { campaignId, callStatus: "FAILED" },
+      }),
+    ]);
+
+    res.json({
+      total,
+      pending,
+      inProgress,
+      completed,
+      failed,
+    });
+  } catch (err: any) {
+    console.error("Batch status error:", err);
+    res.status(500).json({
+      ok: false,
+      error: "Failed to fetch batch status",
       details: String(err?.message || err),
     });
   }

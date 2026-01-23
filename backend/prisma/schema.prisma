@@ -26,6 +26,7 @@ model Campaign {
   propertyId              String?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
+  batchActive             Boolean                  @default(false)
   callerDisplayName       String?
   callerIdentityMode      String?                  @default("GENERIC")
   campaignKnowledge       Json?
@@ -37,6 +38,8 @@ model Campaign {
   property                Property?                @relation(fields: [propertyId], references: [id])
   campaignContacts        CampaignContact[]
   outcomePatterns         OutcomeLearningPattern[]
+
+  @@index([batchActive])
 }
 
 model Contact {
@@ -56,6 +59,8 @@ model CampaignContact {
   campaignId            String
   contactId             String
   status                LeadStatus          @default(NOT_PICK)
+  callStatus            CallStatus          @default(PENDING)
+  createdAt             DateTime            @default(now())
   lastCallAt            DateTime?
   convertedAt           DateTime?
   followUpAfterHours    Int?
@@ -74,6 +79,8 @@ model CampaignContact {
   calls                 CallLog[]
   campaign              Campaign            @relation(fields: [campaignId], references: [id])
   contact               Contact             @relation(fields: [contactId], references: [id])
+
+  @@index([campaignId, callStatus, createdAt])
 }
 
 model CallLog {
@@ -116,7 +123,7 @@ model Call {
   id            String        @id @default(cuid())
   campaignId    String
   leadId        String
-  status        CallStatus
+  status        CallLifecycleStatus
   durationSec   Int?
   interestLevel InterestLevel?
   summary       String?
@@ -189,6 +196,13 @@ enum LeadStatus {
 }
 
 enum CallStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum CallLifecycleStatus {
   STARTED
   PICKED
   NO_ANSWER
