@@ -2765,7 +2765,8 @@ export default function Home() {
                     CSV must have columns: <strong>name</strong>, <strong>phone</strong>
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
-                    Phone numbers must be in E.164 format (e.g., +919876543210)
+                    Phone numbers can be entered as 9876543210, 919876543210, or +919876543210.
+                    They will be normalized automatically.
                   </p>
                 </div>
 

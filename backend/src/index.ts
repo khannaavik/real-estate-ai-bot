@@ -2977,33 +2977,28 @@ apiRoutes.post("/campaigns/:campaignId/import-csv", upload.single('csv'), async 
       });
     }
 
-    function normalizePhoneToE164(phone: string): string | null {
-      let cleaned = phone.replace(/[\s,\-()]/g, "");
+    function normalizeIndianPhone(raw: string): string | null {
+      if (!raw) return null;
 
-      if (cleaned.startsWith("+")) {
-        cleaned = cleaned.substring(1);
+      const cleaned = raw.replace(/\s|-/g, "");
+
+      // Case 1: Already E.164
+      if (/^\+91\d{10}$/.test(cleaned)) {
+        return cleaned;
       }
 
-      if (/^[6-9]\d{9}$/.test(cleaned)) {
-        return `+91${cleaned}`;
-      }
-
-      if (/^0[6-9]\d{9}$/.test(cleaned)) {
-        return `+91${cleaned.substring(1)}`;
-      }
-
-      if (cleaned.startsWith("91") && cleaned.length === 12) {
+      // Case 2: Starts with 91 (no +)
+      if (/^91\d{10}$/.test(cleaned)) {
         return `+${cleaned}`;
       }
 
-      if (phone.trim().startsWith("+")) {
-        return phone.trim();
+      // Case 3: 10-digit local Indian number
+      if (/^\d{10}$/.test(cleaned)) {
+        return `+91${cleaned}`;
       }
 
-      return null;
+      return null; // invalid
     }
-
-    const e164Regex = /^\+[1-9]\d{1,14}$/;
     let imported = 0;
     let skipped = 0;
 
@@ -3019,8 +3014,8 @@ apiRoutes.post("/campaigns/:campaignId/import-csv", upload.single('csv'), async 
         continue;
       }
 
-      const phone = normalizePhoneToE164(phoneRaw);
-      if (!phone || !e164Regex.test(phone)) {
+      const phone = normalizeIndianPhone(phoneRaw);
+      if (!phone) {
         skipped++;
         continue;
       }
@@ -3070,7 +3065,7 @@ apiRoutes.post("/campaigns/:campaignId/import-csv", upload.single('csv'), async 
       imported++;
     }
 
-    res.json({ imported, skipped });
+    res.json({ imported, skipped, reason: "Invalid phone format" });
   } catch (err: any) {
     console.error("CSV import error:", err);
     res.status(500).json({
@@ -4140,41 +4135,28 @@ app.post("/leads/upload-csv/:campaignId", upload.single('csv'), async (req: Requ
       });
     }
 
-    // Helper function to normalize Indian phone numbers to E.164
-    function normalizePhoneToE164(phone: string): string | null {
-      // Remove spaces, commas, hyphens, parentheses
-      let cleaned = phone.replace(/[\s,\-()]/g, '');
-      
-      // Remove leading + if present
-      if (cleaned.startsWith('+')) {
-        cleaned = cleaned.substring(1);
+    function normalizeIndianPhone(raw: string): string | null {
+      if (!raw) return null;
+
+      const cleaned = raw.replace(/\s|-/g, '');
+
+      // Case 1: Already E.164
+      if (/^\+91\d{10}$/.test(cleaned)) {
+        return cleaned;
       }
-      
-      // If 10 digits (Indian mobile), prefix with +91
-      if (/^[6-9]\d{9}$/.test(cleaned)) {
-        return `+91${cleaned}`;
-      }
-      
-      // If 11 digits starting with 0 (Indian landline), remove 0 and prefix +91
-      if (/^0[6-9]\d{9}$/.test(cleaned)) {
-        return `+91${cleaned.substring(1)}`;
-      }
-      
-      // If already in E.164 format (starts with +), validate
-      if (cleaned.startsWith('91') && cleaned.length === 12) {
+
+      // Case 2: Starts with 91 (no +)
+      if (/^91\d{10}$/.test(cleaned)) {
         return `+${cleaned}`;
       }
-      
-      // If already starts with +, return as is (will validate later)
-      if (phone.trim().startsWith('+')) {
-        return phone.trim();
-      }
-      
-      return null;
-    }
 
-    // Validate phone number format (E.164)
-    const e164Regex = /^\+[1-9]\d{1,14}$/;
+      // Case 3: 10-digit local Indian number
+      if (/^\d{10}$/.test(cleaned)) {
+        return `+91${cleaned}`;
+      }
+
+      return null; // invalid
+    }
 
     // Process each row
     const summary = {
@@ -4202,11 +4184,8 @@ app.post("/leads/upload-csv/:campaignId", upload.single('csv'), async (req: Requ
         continue;
       }
 
-      // Normalize phone number (handle Indian numbers)
-      const phone = normalizePhoneToE164(phoneRaw);
-      
-      // Validate phone format
-      if (!phone || !e164Regex.test(phone)) {
+      const phone = normalizeIndianPhone(phoneRaw);
+      if (!phone) {
         summary.invalidRows++;
         continue;
       }
@@ -4298,6 +4277,7 @@ app.post("/leads/upload-csv/:campaignId", upload.single('csv'), async (req: Requ
       created: summary.created,
       duplicates: summary.duplicates,
       invalidRows: summary.invalidRows,
+      reason: "Invalid phone format",
       uploadBatchId: uploadBatchId,
     });
   } catch (err: any) {
