@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { BatchCallStatus, CallLifecycleStatus, CallStatus } from "@prisma/client";
+import { BatchCallStatus, BatchState, CallLifecycleStatus, CallStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { pinAuthMiddleware } from './middleware/pinAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
@@ -2656,6 +2656,7 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       select: {
         id: true,
         batchActive: true,
+        batchState: true,
       },
     });
 
@@ -2663,13 +2664,13 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       return res.status(404).json({ ok: false, error: "Campaign not found" });
     }
 
-    if (campaign.batchActive) {
+    if (campaign.batchActive || campaign.batchState === BatchState.PAUSED || campaign.batchState === BatchState.RUNNING) {
       return res.status(409).json({ ok: false, error: "Batch already running" });
     }
 
     await prisma.campaign.update({
       where: { id: campaignId },
-      data: { batchActive: true },
+      data: { batchActive: true, batchState: BatchState.RUNNING },
     });
 
     if (DRY_RUN_CALLS) {
@@ -2701,13 +2702,59 @@ apiRoutes.post("/campaigns/:campaignId/stop-batch", async (req: Request, res: Re
 
     await prisma.campaign.update({
       where: { id: campaignId },
-      data: { batchActive: false },
+      data: { batchActive: false, batchState: BatchState.STOPPED },
     });
 
+    console.log("[BATCH] Stopped");
     res.json({ status: "stopped" });
   } catch (err: any) {
     console.error("Stop batch error:", err);
     res.status(200).json({ status: "stopped" });
+  }
+});
+
+// POST /api/campaigns/:campaignId/pause-batch - Pause batch
+apiRoutes.post("/campaigns/:campaignId/pause-batch", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { batchState: BatchState.PAUSED, batchActive: true },
+    });
+
+    console.log("[BATCH] Paused");
+    res.json({ status: "paused" });
+  } catch (err: any) {
+    console.error("Pause batch error:", err);
+    res.status(200).json({ status: "paused" });
+  }
+});
+
+// POST /api/campaigns/:campaignId/resume-batch - Resume batch
+apiRoutes.post("/campaigns/:campaignId/resume-batch", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { batchState: BatchState.RUNNING, batchActive: true },
+    });
+
+    void startDryRunCallWorker(campaignId);
+    console.log("[BATCH] Resumed");
+    res.json({ status: "resumed" });
+  } catch (err: any) {
+    console.error("Resume batch error:", err);
+    res.status(200).json({ status: "resumed" });
   }
 });
 
@@ -2728,7 +2775,7 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
 
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      select: { id: true, batchActive: true },
+      select: { id: true, batchActive: true, batchState: true },
     });
 
     if (!campaign) {
@@ -2759,7 +2806,7 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
       inProgress,
       completed,
       failed,
-      running: campaign.batchActive === true,
+      running: campaign.batchState === BatchState.RUNNING,
     });
   } catch (err: any) {
     console.error("[BATCH STATUS SAFE ERROR]", err);

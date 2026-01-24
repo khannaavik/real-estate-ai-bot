@@ -45,7 +45,12 @@ function safeParseJson(content: string): AiCallAnalysis | null {
   }
 }
 
-async function generateAiSummary(contactPhone: string): Promise<AiCallAnalysis | null> {
+async function generateAiSummary(input: {
+  contactPhone: string;
+  openingScript: string | null;
+  tone: "FORMAL" | "FRIENDLY" | "ASSERTIVE";
+  language: "EN";
+}): Promise<AiCallAnalysis | null> {
   const client = getOpenAiClient();
   if (!client) return null;
 
@@ -56,7 +61,10 @@ async function generateAiSummary(contactPhone: string): Promise<AiCallAnalysis |
     "interestLevel must be one of: HOT, WARM, COLD.",
     "nextAction must be one of: CALLBACK, IGNORE, FOLLOW_UP.",
     "Keep summary to 1-2 sentences, realistic and concise.",
-    `Contact phone: ${contactPhone || "unknown"}.`,
+    `Tone: ${input.tone}.`,
+    `Language: ${input.language}.`,
+    `Opening script: ${input.openingScript || "N/A"}.`,
+    `Contact phone: ${input.contactPhone || "unknown"}.`,
   ].join("\n");
 
   try {
@@ -103,7 +111,7 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
     if (contacts.length === 0) {
       await prisma.campaign.update({
         where: { id: campaignId },
-        data: { batchActive: false },
+        data: { batchActive: false, batchState: "COMPLETED" },
       });
       console.log(`[DRY-RUN] Batch completed ${campaignId}`);
       return;
@@ -113,10 +121,22 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
       try {
         const campaign = await prisma.campaign.findUnique({
           where: { id: campaignId },
-          select: { batchActive: true },
+          select: {
+            batchActive: true,
+            batchState: true,
+            openingScript: true,
+            tone: true,
+            language: true,
+          },
         });
 
-        if (!campaign?.batchActive) {
+        if (!campaign?.batchActive || campaign.batchState === "STOPPED") {
+          console.log("[BATCH] Stopped");
+          break;
+        }
+
+        if (campaign.batchState === "PAUSED") {
+          console.log("[BATCH] Paused");
           break;
         }
 
@@ -157,7 +177,12 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           const fallbackInterestLevels: DryRunInterest[] = ["HOT", "WARM", "COLD"];
           const fallbackInterest =
             fallbackInterestLevels[Math.floor(Math.random() * fallbackInterestLevels.length)];
-          const aiResult = await generateAiSummary(contact.contact?.phone || "");
+          const aiResult = await generateAiSummary({
+            contactPhone: contact.contact?.phone || "",
+            openingScript: campaign?.openingScript || null,
+            tone: campaign?.tone || "FRIENDLY",
+            language: campaign?.language || "EN",
+          });
           interestLevel = aiResult?.interestLevel ?? fallbackInterest;
           nextAction = aiResult?.nextAction ?? "FOLLOW_UP";
           aiSummary = aiResult?.summary ?? "Dry run completed successfully";
@@ -227,10 +252,19 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
       }),
     ]);
 
-    if (pendingCount === 0 && inProgressCount === 0) {
+    const finalCampaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: { batchState: true },
+    });
+
+    if (
+      pendingCount === 0 &&
+      inProgressCount === 0 &&
+      finalCampaign?.batchState === "RUNNING"
+    ) {
       await prisma.campaign.update({
         where: { id: campaignId },
-        data: { batchActive: false },
+        data: { batchActive: false, batchState: "COMPLETED" },
       });
       console.log(`[DRY-RUN] Batch completed ${campaignId}`);
     }
