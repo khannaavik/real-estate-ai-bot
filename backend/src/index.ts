@@ -31,7 +31,7 @@ import { selectAdaptiveStrategy, type AdaptiveStrategyContext, selectBestStrateg
 import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMainPitchPoints, getClosingLine, ScriptMode as ConversationScriptMode } from "./conversationStrategy";
 import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCallLive } from "./liveCallMonitor";
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./services/aiCallAnalysis";
-import { startBatchDryRun } from "./services/batchCallWorker";
+import { startDryRunBatch } from "./services/dryRunBatchCaller";
 import { enqueueCsvJob } from "./services/csvImportWorker";
 
 
@@ -2658,14 +2658,18 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       return res.status(404).json({ ok: false, error: "Campaign not found" });
     }
 
+    if (campaign.batchActive) {
+      return res.status(409).json({ ok: false, error: "Batch already running" });
+    }
+
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { batchActive: true },
     });
 
-    void startBatchDryRun(campaignId);
+    void startDryRunBatch(campaignId);
 
-    res.json({ status: "started" });
+    res.json({ started: true });
   } catch (err: any) {
     console.error("Start batch error:", err);
     res.status(500).json({
