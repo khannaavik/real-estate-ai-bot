@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
+import { CallStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { pinAuthMiddleware } from './middleware/pinAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
@@ -37,11 +38,8 @@ import { enqueueCsvJob } from "./services/csvImportWorker";
 
 
 
-// Load environment variables (local development only)
-// Production (Railway) relies on process.env directly
-if (process.env.NODE_ENV !== 'production') {
-  dotenv.config();
-}
+// Load environment variables (safe in all environments)
+dotenv.config();
 
 // Startup logging
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -2981,8 +2979,8 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
     }
 
     await prisma.campaignContact.updateMany({
-      where: { campaignId, callStatus: "IN_PROGRESS" },
-      data: { callStatus: "PENDING" },
+      where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
+      data: { callStatus: CallStatus.PENDING },
     });
 
     await prisma.campaign.update({
@@ -2993,7 +2991,7 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
     const queued = await prisma.campaignContact.count({
       where: {
         campaignId,
-        callStatus: { in: ["PENDING", null as any] },
+        callStatus: { in: [CallStatus.PENDING, null as any] },
       },
     });
 
@@ -3046,16 +3044,16 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
         where: { campaignId },
       }),
       prisma.campaignContact.count({
-        where: { campaignId, callStatus: { in: ["PENDING", null as any] } },
+        where: { campaignId, callStatus: { in: [CallStatus.PENDING, null as any] } },
       }),
       prisma.campaignContact.count({
-        where: { campaignId, callStatus: "IN_PROGRESS" },
+        where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
       }),
       prisma.campaignContact.count({
-        where: { campaignId, callStatus: "COMPLETED" },
+        where: { campaignId, callStatus: CallStatus.COMPLETED },
       }),
       prisma.campaignContact.count({
-        where: { campaignId, callStatus: "FAILED" },
+        where: { campaignId, callStatus: CallStatus.FAILED },
       }),
     ]);
 

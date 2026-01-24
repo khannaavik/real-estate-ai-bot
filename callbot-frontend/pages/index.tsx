@@ -136,6 +136,7 @@ export default function Home() {
   const [isUploadingCsv, setIsUploadingCsv] = useState(false);
   const [csvUploadProgress, setCsvUploadProgress] = useState<string | null>(null);
   const [csvUploadSuccess, setCsvUploadSuccess] = useState<{ leadCount: number } | null>(null);
+  const [csvBatchId, setCsvBatchId] = useState<string | null>(null);
   const [isStartingBatch, setIsStartingBatch] = useState(false);
   const [batchStatus, setBatchStatus] = useState<{ total: number; pending: number; inProgress: number; completed: number; failed: number } | null>(null);
   const [batchStatusError, setBatchStatusError] = useState<string | null>(null);
@@ -2846,27 +2847,49 @@ export default function Home() {
                         const formData = new FormData();
                         formData.append('csv', csvFile);
 
-                        const data: any = await safeFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/import-csv`, {
+                        let resolved = false;
+                        const timeoutId = window.setTimeout(() => {
+                          if (!resolved) {
+                            setCsvUploadProgress('Upload accepted, processing in background');
+                          }
+                        }, 10000);
+
+                        const pin = typeof window !== 'undefined' ? localStorage.getItem('dashboard_pin') : null;
+                        const headers: HeadersInit = pin ? { 'x-dashboard-pin': pin } : {};
+
+                        const res = await fetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/import-csv`, {
                           method: 'POST',
                           body: formData,
-                          // Do NOT set Content-Type header - browser will set it with boundary
+                          headers,
                         });
 
-                        const imported = typeof data?.imported === 'number' ? data.imported : 0;
-                        const skipped = typeof data?.skipped === 'number' ? data.skipped : 0;
-                        setCsvUploadSuccess({ leadCount: imported });
-                        setCsvUploadSuccessBanner({ leadCount: imported });
-                        setLastImportSummary({ imported, skipped });
-                        setToast(`CSV import complete: ${imported} imported, ${skipped} skipped`);
+                        resolved = true;
+                        window.clearTimeout(timeoutId);
+
+                        if (!res.ok) {
+                          const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}: ${res.statusText}` }));
+                          setCsvUploadProgress(`Error: ${errorData.error || errorData.details || 'Upload failed'}`);
+                          return;
+                        }
+
+                        const data: any = await res.json();
+                        setCsvBatchId(data?.batchId || null);
                         setCsvUploadProgress(null);
                         setShowCsvUploadModal(false);
-                        if (selectedCampaign) {
-                          await openCampaign(selectedCampaign);
-                          fetchBatchStatus();
-                        }
+                        setCsvFile(null);
+                        setCsvUploadSuccess(null);
+                        setCsvUploadSuccessBanner(null);
+                        setLastImportSummary(null);
+                        setToast('CSV upload accepted. Processing in background.');
+                        fetchBatchStatus();
+                        startBatchPolling();
                       } catch (err: any) {
                         console.error('Failed to upload CSV:', err);
                         const errorMessage = err?.message || 'Failed to upload CSV. Please check your connection.';
+                        if (errorMessage.includes('Request timeout')) {
+                          setCsvUploadProgress('Processing started, tracking progress...');
+                          return;
+                        }
                         setCsvUploadProgress(errorMessage);
                         setToast(errorMessage);
                       } finally {

@@ -1,9 +1,12 @@
+import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 
-if (!process.env.PRISMA_ACCELERATE_URL) {
+const accelerateUrl = process.env.PRISMA_ACCELERATE_URL;
+
+if (!accelerateUrl) {
   throw new Error("PRISMA_ACCELERATE_URL is missing at runtime");
 }
 
 export const prisma = new PrismaClient({
-  accelerateUrl: process.env.PRISMA_ACCELERATE_URL,
+  accelerateUrl,
 });
