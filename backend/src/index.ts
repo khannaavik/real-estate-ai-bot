@@ -31,7 +31,7 @@ import { selectAdaptiveStrategy, type AdaptiveStrategyContext, selectBestStrateg
 import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMainPitchPoints, getClosingLine, ScriptMode as ConversationScriptMode } from "./conversationStrategy";
 import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCallLive } from "./liveCallMonitor";
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./services/aiCallAnalysis";
-import { runBatchCallWorker } from "./services/batchCallWorker";
+import { startBatchDryRun } from "./services/batchCallWorker";
 import { enqueueCsvJob } from "./services/csvImportWorker";
 
 
@@ -2640,7 +2640,7 @@ apiRoutes.post("/campaigns/:campaignId/import-csv", upload.single('csv'), async 
   }
 });
 
-// POST /api/campaigns/:campaignId/start-batch - Start batch calling (stub)
+// POST /api/campaigns/:campaignId/start-batch - Start batch dry run
 apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: Response) => {
   try {
     const { campaignId } = req.params;
@@ -2658,41 +2658,14 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       return res.status(404).json({ ok: false, error: "Campaign not found" });
     }
 
-    const activeBatch = await prisma.batchCallJob.findFirst({
-      where: {
-        campaignId,
-        status: { in: [BatchCallStatus.QUEUED, BatchCallStatus.RUNNING] },
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true },
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { batchActive: true },
     });
 
-    if (activeBatch) {
-      return res.status(400).json({ ok: false, error: "Batch already active" });
-    }
+    void startBatchDryRun(campaignId);
 
-    const pending = await prisma.campaignContact.count({
-      where: {
-        campaignId,
-        callStatus: CallStatus.PENDING,
-      },
-    });
-
-    const batchJob = await prisma.batchCallJob.create({
-      data: {
-        campaignId,
-        status: BatchCallStatus.QUEUED,
-        pending,
-        inProgress: 0,
-        completed: 0,
-        failed: 0,
-      },
-      select: { id: true },
-    });
-
-    void runBatchCallWorker(batchJob.id);
-
-    res.json({ batchId: batchJob.id });
+    res.json({ status: "started" });
   } catch (err: any) {
     console.error("Start batch error:", err);
     res.status(500).json({
@@ -2703,7 +2676,7 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
   }
 });
 
-// POST /api/campaigns/:campaignId/stop-batch - Stop batch calling (stub)
+// POST /api/campaigns/:campaignId/stop-batch - Stop batch dry run
 apiRoutes.post("/campaigns/:campaignId/stop-batch", async (req: Request, res: Response) => {
   try {
     const { campaignId } = req.params;
@@ -2712,31 +2685,15 @@ apiRoutes.post("/campaigns/:campaignId/stop-batch", async (req: Request, res: Re
       return res.status(400).json({ ok: false, error: "campaignId is required" });
     }
 
-    const activeBatch = await prisma.batchCallJob.findFirst({
-      where: {
-        campaignId,
-        status: { in: [BatchCallStatus.QUEUED, BatchCallStatus.RUNNING] },
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true },
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { batchActive: false },
     });
 
-    if (!activeBatch) {
-      return res.json({ success: true });
-    }
-
-    await prisma.batchCallJob.update({
-      where: { id: activeBatch.id },
-      data: {
-        status: BatchCallStatus.STOPPED,
-        stoppedAt: new Date(),
-      },
-    });
-
-    res.json({ success: true });
+    res.json({ status: "stopped" });
   } catch (err: any) {
     console.error("Stop batch error:", err);
-    res.status(200).json({ success: true });
+    res.status(200).json({ status: "stopped" });
   }
 });
 
@@ -2757,28 +2714,45 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
       return res.json(emptyStatus);
     }
 
-    const batchJob = await prisma.batchCallJob.findFirst({
-      where: { campaignId },
-      orderBy: { createdAt: "desc" },
-      select: {
-        status: true,
-        pending: true,
-        inProgress: true,
-        completed: true,
-        failed: true,
-      },
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true, batchActive: true },
     });
 
-    if (!batchJob) {
+    if (!campaign) {
       return res.json(emptyStatus);
     }
 
+    const [pending, inProgress, completed, failed] = await Promise.all([
+      prisma.campaignContact.count({
+        where: { campaignId, callStatus: CallStatus.PENDING },
+      }),
+      prisma.campaignContact.count({
+        where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
+      }),
+      prisma.campaignContact.count({
+        where: { campaignId, callStatus: CallStatus.COMPLETED },
+      }),
+      prisma.campaignContact.count({
+        where: { campaignId, callStatus: CallStatus.FAILED },
+      }),
+    ]);
+
+    const status =
+      pending + inProgress > 0
+        ? campaign.batchActive
+          ? BatchCallStatus.RUNNING
+          : BatchCallStatus.STOPPED
+        : completed + failed > 0
+        ? BatchCallStatus.COMPLETED
+        : BatchCallStatus.STOPPED;
+
     res.json({
-      status: batchJob.status,
-      pending: batchJob.pending,
-      inProgress: batchJob.inProgress,
-      completed: batchJob.completed,
-      failed: batchJob.failed,
+      status,
+      pending,
+      inProgress,
+      completed,
+      failed,
     });
   } catch (err: any) {
     console.error("Batch status error:", err);
