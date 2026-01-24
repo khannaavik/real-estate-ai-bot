@@ -2697,21 +2697,19 @@ apiRoutes.post("/campaigns/:campaignId/stop-batch", async (req: Request, res: Re
   }
 });
 
-// GET /api/campaigns/:campaignId/batch-status - Batch call status
+// GET /api/campaigns/:campaignId/batch-status - Batch call status (safe)
 apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: Response) => {
-  const emptyStatus = {
-    status: BatchCallStatus.STOPPED,
-    pending: 0,
-    inProgress: 0,
-    completed: 0,
-    failed: 0,
-  };
-
   try {
     const { campaignId } = req.params;
 
     if (!campaignId) {
-      return res.json(emptyStatus);
+      return res.json({
+        pending: 0,
+        inProgress: 0,
+        completed: 0,
+        failed: 0,
+        running: false,
+      });
     }
 
     const campaign = await prisma.campaign.findUnique({
@@ -2720,43 +2718,44 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
     });
 
     if (!campaign) {
-      return res.json(emptyStatus);
+      return res.json({
+        pending: 0,
+        inProgress: 0,
+        completed: 0,
+        failed: 0,
+        running: false,
+      });
     }
 
-    const [pending, inProgress, completed, failed] = await Promise.all([
-      prisma.campaignContact.count({
-        where: { campaignId, callStatus: CallStatus.PENDING },
-      }),
-      prisma.campaignContact.count({
-        where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
-      }),
-      prisma.campaignContact.count({
-        where: { campaignId, callStatus: CallStatus.COMPLETED },
-      }),
-      prisma.campaignContact.count({
-        where: { campaignId, callStatus: CallStatus.FAILED },
-      }),
-    ]);
-
-    const status =
-      pending + inProgress > 0
-        ? campaign.batchActive
-          ? BatchCallStatus.RUNNING
-          : BatchCallStatus.STOPPED
-        : completed + failed > 0
-        ? BatchCallStatus.COMPLETED
-        : BatchCallStatus.STOPPED;
+    const pending = await prisma.campaignContact.count({
+      where: { campaignId, callStatus: CallStatus.PENDING },
+    });
+    const inProgress = await prisma.campaignContact.count({
+      where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
+    });
+    const completed = await prisma.campaignContact.count({
+      where: { campaignId, callStatus: CallStatus.COMPLETED },
+    });
+    const failed = await prisma.campaignContact.count({
+      where: { campaignId, callStatus: CallStatus.FAILED },
+    });
 
     res.json({
-      status,
       pending,
       inProgress,
       completed,
       failed,
+      running: campaign.batchActive === true,
     });
   } catch (err: any) {
-    console.error("Batch status error:", err);
-    res.json(emptyStatus);
+    console.error("[BATCH STATUS SAFE ERROR]", err);
+    res.json({
+      pending: 0,
+      inProgress: 0,
+      completed: 0,
+      failed: 0,
+      running: false,
+    });
   }
 });
 
