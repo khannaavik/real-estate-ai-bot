@@ -13,17 +13,18 @@ let isProcessing = false;
 
 function normalizeIndianPhone(raw: string): string | null {
   if (!raw) return null;
-  const cleaned = raw.replace(/\s|-/g, "");
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const digitsOnly = trimmed.replace(/\D/g, "");
 
-  if (/^\+91\d{10}$/.test(cleaned)) {
-    return cleaned;
+  if (digitsOnly.length === 10) {
+    return `+91${digitsOnly}`;
   }
-  if (/^91\d{10}$/.test(cleaned)) {
-    return `+${cleaned}`;
+
+  if (digitsOnly.length === 12 && digitsOnly.startsWith("91")) {
+    return `+${digitsOnly}`;
   }
-  if (/^\d{10}$/.test(cleaned)) {
-    return `+91${cleaned}`;
-  }
+
   return null;
 }
 
@@ -42,11 +43,13 @@ async function updateJobCounters(jobId: string, counters: CsvCounters, status?: 
 }
 
 async function processJob(jobId: string): Promise<void> {
+  console.log("[CSV WORKER] Starting job:", jobId);
   const job = await prisma.csvImportJob.findUnique({
     where: { id: jobId },
   });
 
   if (!job) {
+    console.warn("[CSV WORKER] Job not found:", jobId);
     return;
   }
 
@@ -81,7 +84,9 @@ async function processJob(jobId: string): Promise<void> {
       return;
     }
 
-    for (const row of records) {
+    console.log("[CSV WORKER] Records parsed:", records.length, "job:", jobId);
+
+    for (const [index, row] of records.entries()) {
       counters.pending -= 1;
       counters.inProgress = 1;
       await updateJobCounters(jobId, counters);
@@ -91,10 +96,12 @@ async function processJob(jobId: string): Promise<void> {
         const phoneKey = Object.keys(row).find((k) => k.trim().toLowerCase() === "phone") || "phone";
         const name = (row[nameKey] || "").trim();
         const phoneRaw = (row[phoneKey] || "").trim();
+        console.log("[CSV WORKER] Processing row:", index + 1, "name:", name || "Unknown", "phoneRaw:", phoneRaw);
 
         const phone = normalizeIndianPhone(phoneRaw);
         if (!phone) {
           counters.failed += 1;
+          console.warn("[CSV WORKER] Skipping row due to invalid phone:", phoneRaw);
           continue;
         }
 
@@ -112,6 +119,7 @@ async function processJob(jobId: string): Promise<void> {
 
         if (existingContact && Array.isArray((existingContact as any).campaigns) && (existingContact as any).campaigns.length > 0) {
           counters.failed += 1;
+          console.warn("[CSV WORKER] Skipping row (already in campaign):", phone);
           continue;
         }
 
@@ -126,6 +134,11 @@ async function processJob(jobId: string): Promise<void> {
               },
             });
 
+        console.log("[CSV WORKER] Inserting CampaignContact:", {
+          campaignId: job.campaignId,
+          contactId: contact.id,
+          phone,
+        });
         await prisma.campaignContact.create({
           data: {
             campaignId: job.campaignId,
@@ -158,6 +171,7 @@ async function processJob(jobId: string): Promise<void> {
 async function processQueue(): Promise<void> {
   if (isProcessing) return;
   isProcessing = true;
+  console.log("[CSV WORKER] Queue processing started. Jobs:", queue.length);
 
   try {
     while (queue.length > 0) {
