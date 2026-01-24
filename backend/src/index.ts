@@ -2991,7 +2991,7 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
     const queued = await prisma.campaignContact.count({
       where: {
         campaignId,
-        OR: [{ callStatus: CallStatus.PENDING }, { callStatus: null }],
+        callStatus: CallStatus.PENDING,
       },
     });
 
@@ -3044,7 +3044,7 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
         where: { campaignId },
       }),
       prisma.campaignContact.count({
-        where: { campaignId, OR: [{ callStatus: CallStatus.PENDING }, { callStatus: null }] },
+        where: { campaignId, callStatus: CallStatus.PENDING },
       }),
       prisma.campaignContact.count({
         where: { campaignId, callStatus: CallStatus.IN_PROGRESS },

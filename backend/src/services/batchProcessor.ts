@@ -107,11 +107,10 @@ async function endMockCall(callId: string): Promise<void> {
 }
 
 export async function processNextLead(campaignId: string): Promise<boolean> {
-  const pendingOrNull = [{ callStatus: CallStatus.PENDING }, { callStatus: null }];
   const lead = await prisma.campaignContact.findFirst({
     where: {
       campaignId,
-      OR: pendingOrNull,
+      callStatus: CallStatus.PENDING,
     },
     orderBy: { createdAt: "asc" },
   });
@@ -121,7 +120,7 @@ export async function processNextLead(campaignId: string): Promise<boolean> {
   const claim = await prisma.campaignContact.updateMany({
     where: {
       id: lead.id,
-      OR: pendingOrNull,
+      callStatus: CallStatus.PENDING,
     },
     data: { callStatus: CallStatus.IN_PROGRESS },
   });
