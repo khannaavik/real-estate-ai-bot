@@ -15,8 +15,6 @@ function randomBetweenSeconds(minSeconds: number, maxSeconds: number): number {
   return Math.floor(Math.random() * (maxSeconds - minSeconds + 1)) + minSeconds;
 }
 
-const activeDryRunBatches = new Set<string>();
-
 type DryRunResult = "COMPLETED" | "NO_ANSWER" | "BUSY" | "FAILED";
 type DryRunInterest = "HOT" | "WARM" | "COLD" | "NONE";
 type DryRunNextAction = "CALLBACK" | "IGNORE" | "FOLLOW_UP";
@@ -93,9 +91,6 @@ async function generateAiSummary(input: {
 }
 
 export async function startDryRunCallWorker(campaignId: string): Promise<void> {
-  if (activeDryRunBatches.has(campaignId)) return;
-  activeDryRunBatches.add(campaignId);
-
   try {
     console.log(`[DRY-RUN] Batch started ${campaignId}`);
 
@@ -130,20 +125,31 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           },
         });
 
+        console.log(`[BATCH] State check: ${campaign?.batchState ?? "UNKNOWN"}`);
+
         if (!campaign?.batchActive || campaign.batchState === "STOPPED") {
-          console.log("[BATCH] Stopped");
+          console.log(`[BATCH] Stopped campaign ${campaignId}`);
+          break;
+        }
+
+        if (campaign.batchState === "COMPLETED") {
+          console.log(`[BATCH] Completed campaign ${campaignId}`);
           break;
         }
 
         while (campaign.batchState === "PAUSED") {
-          console.log("[BATCH] Paused");
-          await sleep(1000);
+          console.log(`[BATCH] Paused campaign ${campaignId}`);
+          await sleep(2000);
           const refreshedCampaign = await prisma.campaign.findUnique({
             where: { id: campaignId },
             select: { batchActive: true, batchState: true },
           });
           if (!refreshedCampaign?.batchActive || refreshedCampaign.batchState === "STOPPED") {
-            console.log("[BATCH] Stopped");
+            console.log(`[BATCH] Stopped campaign ${campaignId}`);
+            return;
+          }
+          if (refreshedCampaign.batchState === "COMPLETED") {
+            console.log(`[BATCH] Completed campaign ${campaignId}`);
             return;
           }
           campaign.batchState = refreshedCampaign.batchState;
@@ -269,17 +275,15 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
     if (
       pendingCount === 0 &&
       inProgressCount === 0 &&
-      finalCampaign?.batchState === "RUNNING"
+      finalCampaign?.batchState !== "STOPPED"
     ) {
       await prisma.campaign.update({
         where: { id: campaignId },
         data: { batchActive: false, batchState: "COMPLETED" },
       });
-      console.log(`[DRY-RUN] Batch completed ${campaignId}`);
+      console.log(`[BATCH] Completed campaign ${campaignId}`);
     }
   } catch (err) {
     console.error(`[DRY-RUN] Batch failed ${campaignId}`, err);
-  } finally {
-    activeDryRunBatches.delete(campaignId);
   }
 }

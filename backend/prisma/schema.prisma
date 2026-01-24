@@ -27,7 +27,7 @@ model Campaign {
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   batchActive             Boolean                  @default(false)
-  batchState              BatchState               @default(STOPPED)
+  batchState              BatchState               @default(IDLE)
   openingScript           String?
   tone                    CampaignTone            @default(FRIENDLY)
   language                CampaignLanguage        @default(EN)
@@ -243,6 +243,7 @@ enum CsvImportStatus {
 }
 
 enum BatchState {
+  IDLE
   RUNNING
   PAUSED
   STOPPED

@@ -2767,16 +2767,27 @@ apiRoutes.post("/campaigns/:campaignId/pause", async (req: Request, res: Respons
       return res.status(400).json({ ok: false, error: "campaignId is required" });
     }
 
-    await prisma.campaign.update({
+    const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      data: { batchState: BatchState.PAUSED, batchActive: true },
+      select: { id: true, batchState: true, batchActive: true },
     });
 
+    if (!campaign) {
+      return res.status(404).json({ ok: false, error: "Campaign not found" });
+    }
+
+    if (campaign.batchState !== BatchState.PAUSED) {
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: { batchState: BatchState.PAUSED, batchActive: true },
+      });
+    }
+
     console.log(`[BATCH] Paused campaign ${campaignId}`);
-    res.json({ status: "paused" });
+    res.json({ success: true, batchState: BatchState.PAUSED });
   } catch (err: any) {
     console.error("Pause batch error:", err);
-    res.status(200).json({ status: "paused" });
+    res.status(200).json({ success: true, batchState: BatchState.PAUSED });
   }
 });
 
@@ -2789,17 +2800,28 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
       return res.status(400).json({ ok: false, error: "campaignId is required" });
     }
 
-    await prisma.campaign.update({
+    const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      data: { batchState: BatchState.RUNNING, batchActive: true },
+      select: { id: true, batchState: true, batchActive: true },
     });
+
+    if (!campaign) {
+      return res.status(404).json({ ok: false, error: "Campaign not found" });
+    }
+
+    if (campaign.batchState !== BatchState.RUNNING) {
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: { batchState: BatchState.RUNNING, batchActive: true },
+      });
+    }
 
     void startDryRunCallWorker(campaignId);
     console.log(`[BATCH] Resumed campaign ${campaignId}`);
-    res.json({ status: "resumed" });
+    res.json({ success: true, batchState: BatchState.RUNNING });
   } catch (err: any) {
     console.error("Resume batch error:", err);
-    res.status(200).json({ status: "resumed" });
+    res.status(200).json({ success: true, batchState: BatchState.RUNNING });
   }
 });
 
@@ -2812,16 +2834,27 @@ apiRoutes.post("/campaigns/:campaignId/stop", async (req: Request, res: Response
       return res.status(400).json({ ok: false, error: "campaignId is required" });
     }
 
-    await prisma.campaign.update({
+    const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      data: { batchActive: false, batchState: BatchState.STOPPED },
+      select: { id: true, batchState: true },
     });
 
+    if (!campaign) {
+      return res.status(404).json({ ok: false, error: "Campaign not found" });
+    }
+
+    if (campaign.batchState !== BatchState.STOPPED) {
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: { batchActive: false, batchState: BatchState.STOPPED },
+      });
+    }
+
     console.log(`[BATCH] Stopped campaign ${campaignId}`);
-    res.json({ status: "stopped" });
+    res.json({ success: true, batchState: BatchState.STOPPED });
   } catch (err: any) {
     console.error("Stop batch error:", err);
-    res.status(200).json({ status: "stopped" });
+    res.status(200).json({ success: true, batchState: BatchState.STOPPED });
   }
 });
 
