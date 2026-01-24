@@ -601,7 +601,7 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
 });
 app.post("/twilio/status", async (req: Request, res: Response) => {
   try {
-    const { CallSid, CallStatus, CallDuration } = req.body as {
+    const { CallSid, CallStatus: twilioCallStatus, CallDuration } = req.body as {
       CallSid?: string;
       CallStatus?: string;
       CallDuration?: string;
@@ -624,7 +624,7 @@ app.post("/twilio/status", async (req: Request, res: Response) => {
     let leadStatus: LeadStatus | null = null;
 
     // If call never really connected / failed → mark as NOT_PICK
-    if (["no-answer", "busy", "failed"].includes(CallStatus || "")) {
+    if (["no-answer", "busy", "failed"].includes(twilioCallStatus || "")) {
       leadStatus = "NOT_PICK";
     }
 
@@ -2991,7 +2991,7 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
     const queued = await prisma.campaignContact.count({
       where: {
         campaignId,
-        callStatus: { in: [CallStatus.PENDING, null as any] },
+        OR: [{ callStatus: CallStatus.PENDING }, { callStatus: null }],
       },
     });
 
@@ -3044,7 +3044,7 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
         where: { campaignId },
       }),
       prisma.campaignContact.count({
-        where: { campaignId, callStatus: { in: [CallStatus.PENDING, null as any] } },
+        where: { campaignId, OR: [{ callStatus: CallStatus.PENDING }, { callStatus: null }] },
       }),
       prisma.campaignContact.count({
         where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
