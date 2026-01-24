@@ -35,6 +35,7 @@ model Campaign {
   voiceTranscript         String?
   voiceTranscriptLanguage String?
   batchJobs               BatchCallJob[]
+  csvImportJobs           CsvImportJob[]
   property                Property?                @relation(fields: [propertyId], references: [id])
   campaignContacts        CampaignContact[]
   outcomePatterns         OutcomeLearningPattern[]
@@ -174,6 +175,24 @@ model BatchCallJob {
   campaign      Campaign  @relation(fields: [campaignId], references: [id])
 }
 
+model CsvImportJob {
+  id         String          @id @default(cuid())
+  campaignId String
+  status     CsvImportStatus @default(QUEUED)
+  csvData    String
+  pending    Int             @default(0)
+  inProgress Int             @default(0)
+  completed  Int             @default(0)
+  failed     Int             @default(0)
+  error      String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  campaign   Campaign        @relation(fields: [campaignId], references: [id])
+
+  @@index([campaignId, createdAt])
+  @@index([status])
+}
+
 model OutcomeLearningPattern {
   id            String   @id @default(cuid())
   campaignId    String
@@ -213,4 +232,11 @@ enum InterestLevel {
   COLD
   WARM
   HOT
+}
+
+enum CsvImportStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
 }

@@ -31,6 +31,7 @@ import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMa
 import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCallLive } from "./liveCallMonitor";
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./services/aiCallAnalysis";
 import { startBatchProcessing, resumeActiveBatches } from "./services/batchProcessor";
+import { enqueueCsvJob } from "./services/csvImportWorker";
 
 
 
@@ -2940,132 +2941,17 @@ apiRoutes.post("/campaigns/:campaignId/import-csv", upload.single('csv'), async 
       return res.status(404).json({ ok: false, error: "Campaign not found" });
     }
 
-    let records: any[];
-    try {
-      const csvContent = file.buffer.toString("utf-8");
-      records = parse(csvContent, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-      });
-    } catch (parseError: any) {
-      return res.status(400).json({
-        ok: false,
-        error: "Failed to parse CSV file",
-        details: parseError?.message || String(parseError),
-      });
-    }
+    const job = await prisma.csvImportJob.create({
+      data: {
+        campaignId,
+        status: "QUEUED",
+        csvData: file.buffer.toString("utf-8"),
+      },
+    });
 
-    if (records.length === 0) {
-      return res.status(400).json({ ok: false, error: "CSV file is empty" });
-    }
+    enqueueCsvJob(job.id);
 
-    if (records.length > 500) {
-      return res.status(400).json({ ok: false, error: "CSV upload exceeds 500 row limit" });
-    }
-
-    const requiredHeaders = ["name", "phone"];
-    const firstRow = records[0] || {};
-    const headers = Object.keys(firstRow).map((h) => h.trim().toLowerCase());
-    const missingHeaders = requiredHeaders.filter((h) => !headers.includes(h));
-
-    if (missingHeaders.length > 0) {
-      return res.status(400).json({
-        ok: false,
-        error: `Missing required CSV headers: ${missingHeaders.join(", ")}`,
-        foundHeaders: Object.keys(firstRow),
-      });
-    }
-
-    function normalizeIndianPhone(raw: string): string | null {
-      if (!raw) return null;
-
-      const cleaned = raw.replace(/\s|-/g, "");
-
-      // Case 1: Already E.164
-      if (/^\+91\d{10}$/.test(cleaned)) {
-        return cleaned;
-      }
-
-      // Case 2: Starts with 91 (no +)
-      if (/^91\d{10}$/.test(cleaned)) {
-        return `+${cleaned}`;
-      }
-
-      // Case 3: 10-digit local Indian number
-      if (/^\d{10}$/.test(cleaned)) {
-        return `+91${cleaned}`;
-      }
-
-      return null; // invalid
-    }
-    let imported = 0;
-    let skipped = 0;
-
-    for (const row of records) {
-      const nameKey = Object.keys(row).find((k) => k.trim().toLowerCase() === "name") || "name";
-      const phoneKey = Object.keys(row).find((k) => k.trim().toLowerCase() === "phone") || "phone";
-
-      const name = (row[nameKey] || "").trim();
-      const phoneRaw = (row[phoneKey] || "").trim();
-
-      if (!phoneRaw) {
-        skipped++;
-        continue;
-      }
-
-      const phone = normalizeIndianPhone(phoneRaw);
-      if (!phone) {
-        skipped++;
-        continue;
-      }
-
-      const existingContact = await prisma.contact.findFirst({
-        where: {
-          phone,
-          userId: campaign.userId,
-        },
-        include: {
-          campaigns: {
-            where: { campaignId },
-          },
-        },
-      });
-
-      if (existingContact && Array.isArray((existingContact as any).campaigns) && (existingContact as any).campaigns.length > 0) {
-        skipped++;
-        continue;
-      }
-
-      const contact = existingContact
-        ? existingContact
-        : await prisma.contact.create({
-            data: {
-              userId: campaign.userId,
-              name: name || "Unknown",
-              phone,
-              source: "CSV",
-            },
-          });
-
-      await prisma.campaignContact.create({
-        data: {
-          campaignId,
-          contactId: contact.id,
-          status: "NOT_PICK",
-          callStatus: "PENDING",
-          extraContext: {
-            batchStatus: "PENDING",
-            batchImportedAt: new Date().toISOString(),
-            source: "CSV",
-          } as any,
-        },
-      });
-
-      imported++;
-    }
-
-    res.json({ imported, skipped, reason: "Invalid phone format" });
+    res.json({ batchId: job.id });
   } catch (err: any) {
     console.error("CSV import error:", err);
     res.status(500).json({
@@ -3138,11 +3024,12 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
 
 // GET /api/campaigns/:campaignId/batch-status - Batch call status
 apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: Response) => {
+  const emptyStatus = { total: 0, pending: 0, inProgress: 0, completed: 0, failed: 0 };
   try {
     const { campaignId } = req.params;
 
     if (!campaignId) {
-      return res.status(400).json({ ok: false, error: "campaignId is required" });
+      return res.json(emptyStatus);
     }
 
     const campaign = await prisma.campaign.findUnique({
@@ -3151,7 +3038,7 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
     });
 
     if (!campaign) {
-      return res.status(404).json({ ok: false, error: "Campaign not found" });
+      return res.json(emptyStatus);
     }
 
     const [total, pending, inProgress, completed, failed] = await Promise.all([
@@ -3181,11 +3068,7 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
     });
   } catch (err: any) {
     console.error("Batch status error:", err);
-    res.status(500).json({
-      ok: false,
-      error: "Failed to fetch batch status",
-      details: String(err?.message || err),
-    });
+    res.json(emptyStatus);
   }
 });
 
