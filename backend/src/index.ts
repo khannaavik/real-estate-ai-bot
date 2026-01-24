@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { CallLifecycleStatus, CallStatus } from "@prisma/client";
+import { BatchCallStatus, CallLifecycleStatus, CallStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { pinAuthMiddleware } from './middleware/pinAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
@@ -24,14 +24,14 @@ import { captureSuccessfulPatterns, learnFromSuccessfulCalls } from "./aiLearnin
 import { eventBus, type SSEEvent } from "./eventBus";
 import { decideNextConversationStep } from "./adaptiveConversationEngine";
 import { recordOutcomePattern as recordCallOutcomePattern, suggestOptimizedStrategy } from "./callOutcomeLearning";
-import { executeBatchSequence, stopBatchJob, pauseBatchJob, resumeBatchJob, getRetryMetadata, updateRetryMetadata } from "./batchOrchestrator";
+import { getRetryMetadata, updateRetryMetadata } from "./batchOrchestrator";
 import { getNextValidCallTime, formatNextCallTime } from "./timeWindow";
 import { recordOutcomePattern, getTopPatterns } from "./outcomeLearning";
 import { selectAdaptiveStrategy, type AdaptiveStrategyContext, selectBestStrategyForAutoApply, type AutoApplyStrategyResult } from "./adaptiveStrategy";
 import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMainPitchPoints, getClosingLine, ScriptMode as ConversationScriptMode } from "./conversationStrategy";
 import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCallLive } from "./liveCallMonitor";
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./services/aiCallAnalysis";
-import { startBatchProcessing, resumeActiveBatches } from "./services/batchProcessor";
+import { runBatchCallWorker } from "./services/batchCallWorker";
 import { enqueueCsvJob } from "./services/csvImportWorker";
 
 
@@ -315,7 +315,6 @@ async function startServer() {
       console.log(`[STARTUP] Environment: ${NODE_ENV}`);
     });
 
-    await resumeActiveBatches();
   } catch (error) {
     console.error('[STARTUP] FATAL: Failed to start server:', error);
     process.exit(1);
@@ -1372,48 +1371,24 @@ app.post("/debug/apply-score", async (req: Request, res: Response) => {
       }
     }
 
-    // Check if lead became HOT and pause any active batch jobs
+    // Stop any active batch jobs if lead becomes HOT
     if (status === 'HOT') {
-      // Find active batch jobs for this campaign
       const activeBatchJobs = await prisma.batchCallJob.findMany({
         where: {
           campaignId: updatedCampaignContact.campaignId,
-          status: 'RUNNING',
+          status: BatchCallStatus.RUNNING,
         },
       });
-      
-        // Pause all active batch jobs (lead became HOT)
-        for (const batchJob of activeBatchJobs) {
-          await prisma.batchCallJob.update({
+
+      for (const batchJob of activeBatchJobs) {
+        await prisma.batchCallJob.update({
           where: { id: batchJob.id },
           data: {
-            status: 'PAUSED',
-            pausedAt: new Date(),
+            status: BatchCallStatus.STOPPED,
+            stoppedAt: new Date(),
           },
         });
-        
-        // Stop the batch execution
-        stopBatchJob(batchJob.id);
-        
-        // Emit BATCH_PAUSED event
-        const batchPausedEvent: SSEEvent = {
-          type: 'BATCH_PAUSED',
-          campaignId: updatedCampaignContact.campaignId,
-          contactId: updatedCampaignContact.contactId,
-          campaignContactId: updatedCampaignContact.id,
-          data: {
-            batchJobId: batchJob.id,
-            currentIndex: batchJob.currentIndex,
-            totalLeads: batchJob.totalLeads,
-            reason: 'Lead became HOT',
-          },
-        };
-        
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('[SSE] BATCH_PAUSED (HOT lead) payload:', JSON.stringify(batchPausedEvent, null, 2));
-        }
-        
-        eventBus.emit('event', batchPausedEvent);
+        console.log(`[BATCH] Batch ${batchJob.id} stopped (lead became HOT)`);
       }
     }
 
@@ -2017,6 +1992,59 @@ apiRoutes.get("/campaigns", async (req: Request, res: Response) => {
   }
 });
 
+// DELETE /api/campaigns/:id - Delete campaign and related data
+apiRoutes.delete("/campaigns/:id", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ ok: false, error: "id is required" });
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!campaign) {
+      return res.status(404).json({ ok: false, error: "Campaign not found" });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const contactIds = await tx.campaignContact.findMany({
+        where: { campaignId: id },
+        select: { id: true },
+      });
+      const campaignContactIds = contactIds.map((contact) => contact.id);
+
+      if (campaignContactIds.length > 0) {
+        await tx.callLog.deleteMany({
+          where: { campaignContactId: { in: campaignContactIds } },
+        });
+        await tx.aILearningPattern.deleteMany({
+          where: { campaignContactId: { in: campaignContactIds } },
+        });
+      }
+
+      await tx.campaignContact.deleteMany({ where: { campaignId: id } });
+      await tx.csvImportJob.deleteMany({ where: { campaignId: id } });
+      await tx.batchCallJob.deleteMany({ where: { campaignId: id } });
+      await tx.outcomeLearningPattern.deleteMany({ where: { campaignId: id } });
+      await tx.campaign.delete({ where: { id } });
+    });
+
+    console.log(`[CAMPAIGNS] Deleted campaign ${id}`);
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("DELETE /api/campaigns/:id error:", err);
+    res.status(500).json({
+      ok: false,
+      error: "Failed to delete campaign",
+      details: String(err?.message || err),
+    });
+  }
+});
+
 // POST /api/campaigns/transcribe-audio - Transcribe audio file
 apiRoutes.post("/campaigns/transcribe-audio", upload.single('audio'), async (req: Request, res: Response) => {
   try {
@@ -2443,354 +2471,6 @@ apiRoutes.post("/campaigns", async (req: Request, res: Response) => {
   }
 });
 
-// Batch Call Orchestrator endpoint
-app.post("/batch/start/:campaignId", async (req: Request, res: Response) => {
-  try {
-    const { campaignId } = req.params;
-    
-    if (!campaignId) {
-      return res.status(400).json({ ok: false, error: "campaignId is required" });
-    }
-    
-    const {
-      cooldownHours = 24,
-      maxRetries = 2,
-    } = req.body as {
-      cooldownHours?: number;
-      maxRetries?: number;
-    };
-
-    // Validate campaign exists
-    const campaign = await prisma.campaign.findUnique({
-      where: { id: campaignId },
-    });
-
-    if (!campaign) {
-      return res.status(404).json({
-        ok: false,
-        error: "Campaign not found",
-      });
-    }
-
-    // Load eligible campaign contacts
-    // Eligible: NOT_PICK (with retry check), COLD, WARM (with cooldown check)
-    // Exclude: HOT leads (will pause batch)
-    const allContacts = await prisma.campaignContact.findMany({
-      where: {
-        campaignId,
-        status: {
-          in: ['NOT_PICK', 'COLD', 'WARM'],
-        },
-      },
-      include: {
-        calls: {
-          where: {
-            resultStatus: 'NOT_PICK',
-          },
-        },
-      },
-      orderBy: [
-        { status: 'asc' }, // Process NOT_PICK first, then COLD, then WARM
-        { lastCallAt: 'asc' }, // Oldest calls first
-      ],
-    });
-
-    // Filter eligible leads based on safety rules
-    const eligibleLeadIds: string[] = [];
-    const now = Date.now();
-    const cooldownMs = cooldownHours * 60 * 60 * 1000;
-
-    for (const contact of allContacts) {
-      // Check NOT_PICK retry count
-      if (contact.status === 'NOT_PICK') {
-        const notPickCount = contact.calls.filter((c: { resultStatus: LeadStatus | null }) => c.resultStatus === 'NOT_PICK').length;
-        if (notPickCount >= maxRetries) {
-          continue; // Skip - max retries reached
-        }
-      }
-
-      // Check cooldown period
-      if (contact.lastCallAt) {
-        const hoursSinceLastCall = (now - contact.lastCallAt.getTime()) / (1000 * 60 * 60);
-        if (hoursSinceLastCall < cooldownHours) {
-          continue; // Skip - cooldown not met
-        }
-      }
-
-      eligibleLeadIds.push(contact.id);
-    }
-
-    if (eligibleLeadIds.length === 0) {
-      return res.status(400).json({
-        ok: false,
-        error: "No eligible leads found for batch calling",
-        message: "All leads are either HOT, have reached max retries, or are in cooldown period",
-      });
-    }
-
-    // Create batch job
-    const batchJob = await prisma.batchCallJob.create({
-      data: {
-        campaignId,
-        status: 'PENDING',
-        currentIndex: 0,
-        totalLeads: eligibleLeadIds.length,
-        cooldownHours,
-        maxRetries,
-      },
-    });
-
-    // Start batch execution in background (non-blocking)
-    // This allows the API to return immediately while batch runs
-    executeBatchSequence(
-      batchJob.id,
-      campaignId,
-      eligibleLeadIds,
-      cooldownHours,
-      maxRetries,
-      0 // Start from beginning
-    ).catch(err => {
-      console.error('[BatchOrchestrator] Fatal error in batch sequence:', err);
-    });
-
-    res.json({
-      ok: true,
-      message: "Batch call job started",
-      batchJobId: batchJob.id,
-      totalLeads: eligibleLeadIds.length,
-      cooldownHours,
-      maxRetries,
-    });
-  } catch (err: any) {
-    console.error("Batch start error:", err);
-    res.status(500).json({
-      ok: false,
-      error: "Failed to start batch call job",
-      details: String(err?.message || err),
-    });
-  }
-});
-
-// Pause batch job endpoint
-app.post("/batch/pause/:batchJobId", async (req: Request, res: Response) => {
-  try {
-    const { batchJobId } = req.params;
-    
-    if (!batchJobId) {
-      return res.status(400).json({ ok: false, error: "batchJobId is required" });
-    }
-
-    // Check if batch job exists
-    const batchJob = await prisma.batchCallJob.findUnique({
-      where: { id: batchJobId },
-    });
-
-    if (!batchJob) {
-      return res.status(404).json({
-        ok: false,
-        error: "Batch job not found",
-      });
-    }
-
-    if (batchJob.status !== 'RUNNING') {
-      return res.status(400).json({
-        ok: false,
-        error: `Batch job is not running (current status: ${batchJob.status})`,
-      });
-    }
-
-    // Pause the batch
-    pauseBatchJob(batchJobId as string);
-
-    // Update database
-    const updated = await prisma.batchCallJob.update({
-      where: { id: batchJobId as string },
-      data: {
-        status: 'PAUSED',
-        pausedAt: new Date(),
-      },
-    });
-
-    // Emit SSE event
-    const batchPausedEvent: SSEEvent = {
-      type: 'BATCH_PAUSED',
-      campaignId: batchJob.campaignId,
-      contactId: '',
-      data: {
-        batchJobId,
-        currentIndex: updated.currentIndex,
-        totalLeads: updated.totalLeads,
-        reason: 'Manually paused',
-      },
-    };
-    
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[SSE] BATCH_PAUSED payload:', JSON.stringify(batchPausedEvent, null, 2));
-    }
-    
-    eventBus.emit('event', batchPausedEvent);
-
-    res.json({
-      ok: true,
-      message: "Batch job paused",
-      batchJobId,
-    });
-  } catch (err: any) {
-    console.error("Batch pause error:", err);
-    res.status(500).json({
-      ok: false,
-      error: "Failed to pause batch job",
-      details: String(err?.message || err),
-    });
-  }
-});
-
-// Resume batch job endpoint
-app.post("/batch/resume/:batchJobId", async (req: Request, res: Response) => {
-  try {
-    const { batchJobId } = req.params;
-    
-    if (!batchJobId) {
-      return res.status(400).json({ ok: false, error: "batchJobId is required" });
-    }
-
-    // Check if batch job exists
-    const batchJob = await prisma.batchCallJob.findUnique({
-      where: { id: batchJobId },
-    });
-
-    if (!batchJob) {
-      return res.status(404).json({
-        ok: false,
-        error: "Batch job not found",
-      });
-    }
-
-    if (batchJob.status !== 'PAUSED') {
-      return res.status(400).json({
-        ok: false,
-        error: `Batch job is not paused (current status: ${batchJob.status})`,
-      });
-    }
-
-    // Get resume data
-    const resumeData = await resumeBatchJob(batchJobId as string);
-    if (!resumeData) {
-      return res.status(400).json({
-        ok: false,
-        error: "Failed to prepare batch job for resume",
-      });
-    }
-
-    // Update database
-    const updated = await prisma.batchCallJob.update({
-      where: { id: batchJobId as string },
-      data: {
-        status: 'RUNNING',
-        pausedAt: null,
-      },
-    });
-
-    // Emit SSE event
-    const batchResumedEvent: SSEEvent = {
-      type: 'BATCH_RESUMED',
-      campaignId: batchJob.campaignId,
-      contactId: '',
-      data: {
-        batchJobId,
-        currentIndex: updated.currentIndex,
-        totalLeads: updated.totalLeads,
-      },
-    };
-    
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[SSE] BATCH_RESUMED payload:', JSON.stringify(batchResumedEvent, null, 2));
-    }
-    
-    eventBus.emit('event', batchResumedEvent);
-
-    // Resume execution from currentIndex
-    // Find the position in the eligibleLeadIds array that corresponds to currentIndex
-    // We need to continue from where we left off in the original eligible leads list
-    // Since we're resuming, we should start from the lead at position startIndex in the eligible list
-    const remainingLeadIds = resumeData.leadIds.slice(resumeData.startIndex);
-    
-    // Continue execution in background (pass startIndex to preserve absolute position for progress tracking)
-    executeBatchSequence(
-      batchJobId,
-      resumeData.campaignId,
-      remainingLeadIds,
-      resumeData.cooldownHours,
-      resumeData.maxRetries,
-      resumeData.startIndex // Pass startIndex to preserve absolute position for progress tracking
-    ).catch(err => {
-      console.error('[BatchOrchestrator] Fatal error resuming batch sequence:', err);
-    });
-
-    res.json({
-      ok: true,
-      message: "Batch job resumed",
-      batchJobId,
-      currentIndex: updated.currentIndex,
-    });
-  } catch (err: any) {
-    console.error("Batch resume error:", err);
-    res.status(500).json({
-      ok: false,
-      error: "Failed to resume batch job",
-      details: String(err?.message || err),
-    });
-  }
-});
-
-// Stop batch job endpoint (human override)
-app.post("/batch/stop/:batchJobId", async (req: Request, res: Response) => {
-  try {
-    const { batchJobId } = req.params;
-    
-    if (!batchJobId) {
-      return res.status(400).json({ ok: false, error: "batchJobId is required" });
-    }
-    
-    const { cancelledBy } = req.body as { cancelledBy?: string };
-
-    // Check if batch job exists
-    const batchJob = await prisma.batchCallJob.findUnique({
-      where: { id: batchJobId },
-    });
-
-    if (!batchJob) {
-      return res.status(404).json({
-        ok: false,
-        error: "Batch job not found",
-      });
-    }
-
-    if (batchJob.status === 'COMPLETED' || batchJob.status === 'CANCELLED') {
-      return res.status(400).json({
-        ok: false,
-        error: "Batch job is already completed or cancelled",
-      });
-    }
-
-    // Stop the batch
-    stopBatchJob(batchJobId as string, cancelledBy);
-
-    res.json({
-      ok: true,
-      message: "Batch job stopped",
-      batchJobId: batchJobId as string,
-    });
-  } catch (err: any) {
-    console.error("Batch stop error:", err);
-    res.status(500).json({
-      ok: false,
-      error: "Failed to stop batch job",
-      details: String(err?.message || err),
-    });
-  }
-});
-
 // POST /leads/:campaignContactId/convert
 // Mark a lead as converted and record learning pattern
 app.post("/leads/:campaignContactId/convert", async (req: Request, res: Response) => {
@@ -2960,7 +2640,7 @@ apiRoutes.post("/campaigns/:campaignId/import-csv", upload.single('csv'), async 
   }
 });
 
-// POST /api/campaigns/:campaignId/start-batch - Start batch calling (sequential)
+// POST /api/campaigns/:campaignId/start-batch - Start batch calling (stub)
 apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: Response) => {
   try {
     const { campaignId } = req.params;
@@ -2978,38 +2658,41 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       return res.status(404).json({ ok: false, error: "Campaign not found" });
     }
 
-    await prisma.campaignContact.updateMany({
-      where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
-      data: { callStatus: CallStatus.PENDING },
+    const activeBatch = await prisma.batchCallJob.findFirst({
+      where: {
+        campaignId,
+        status: { in: [BatchCallStatus.QUEUED, BatchCallStatus.RUNNING] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
     });
 
-    await prisma.campaign.update({
-      where: { id: campaignId },
-      data: { batchActive: true },
-    });
+    if (activeBatch) {
+      return res.status(400).json({ ok: false, error: "Batch already active" });
+    }
 
-    const queued = await prisma.campaignContact.count({
+    const pending = await prisma.campaignContact.count({
       where: {
         campaignId,
         callStatus: CallStatus.PENDING,
       },
     });
 
-    if (queued === 0) {
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { batchActive: false },
-      });
-      return res.status(400).json({ ok: false, error: "No PENDING leads found for batch calling" });
-    }
-
-    void startBatchProcessing(campaignId);
-
-    res.json({
-      ok: true,
-      queued,
-      message: "Batch calling started",
+    const batchJob = await prisma.batchCallJob.create({
+      data: {
+        campaignId,
+        status: BatchCallStatus.QUEUED,
+        pending,
+        inProgress: 0,
+        completed: 0,
+        failed: 0,
+      },
+      select: { id: true },
     });
+
+    void runBatchCallWorker(batchJob.id);
+
+    res.json({ batchId: batchJob.id });
   } catch (err: any) {
     console.error("Start batch error:", err);
     res.status(500).json({
@@ -3020,9 +2703,53 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
   }
 });
 
+// POST /api/campaigns/:campaignId/stop-batch - Stop batch calling (stub)
+apiRoutes.post("/campaigns/:campaignId/stop-batch", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    const activeBatch = await prisma.batchCallJob.findFirst({
+      where: {
+        campaignId,
+        status: { in: [BatchCallStatus.QUEUED, BatchCallStatus.RUNNING] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (!activeBatch) {
+      return res.json({ success: true });
+    }
+
+    await prisma.batchCallJob.update({
+      where: { id: activeBatch.id },
+      data: {
+        status: BatchCallStatus.STOPPED,
+        stoppedAt: new Date(),
+      },
+    });
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Stop batch error:", err);
+    res.status(200).json({ success: true });
+  }
+});
+
 // GET /api/campaigns/:campaignId/batch-status - Batch call status
 apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: Response) => {
-  const emptyStatus = { total: 0, pending: 0, inProgress: 0, completed: 0, failed: 0 };
+  const emptyStatus = {
+    status: BatchCallStatus.STOPPED,
+    pending: 0,
+    inProgress: 0,
+    completed: 0,
+    failed: 0,
+  };
+
   try {
     const { campaignId } = req.params;
 
@@ -3030,39 +2757,28 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
       return res.json(emptyStatus);
     }
 
-    const campaign = await prisma.campaign.findUnique({
-      where: { id: campaignId },
-      select: { id: true },
+    const batchJob = await prisma.batchCallJob.findFirst({
+      where: { campaignId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        status: true,
+        pending: true,
+        inProgress: true,
+        completed: true,
+        failed: true,
+      },
     });
 
-    if (!campaign) {
+    if (!batchJob) {
       return res.json(emptyStatus);
     }
 
-    const [total, pending, inProgress, completed, failed] = await Promise.all([
-      prisma.campaignContact.count({
-        where: { campaignId },
-      }),
-      prisma.campaignContact.count({
-        where: { campaignId, callStatus: CallStatus.PENDING },
-      }),
-      prisma.campaignContact.count({
-        where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
-      }),
-      prisma.campaignContact.count({
-        where: { campaignId, callStatus: CallStatus.COMPLETED },
-      }),
-      prisma.campaignContact.count({
-        where: { campaignId, callStatus: CallStatus.FAILED },
-      }),
-    ]);
-
     res.json({
-      total,
-      pending,
-      inProgress,
-      completed,
-      failed,
+      status: batchJob.status,
+      pending: batchJob.pending,
+      inProgress: batchJob.inProgress,
+      completed: batchJob.completed,
+      failed: batchJob.failed,
     });
   } catch (err: any) {
     console.error("Batch status error:", err);
@@ -3613,11 +3329,12 @@ app.get("/analytics/overview/:campaignId", async (req: Request, res: Response) =
       select: {
         id: true,
         status: true,
-        currentIndex: true,
-        totalLeads: true,
         startedAt: true,
-        completedAt: true,
-        cancelledAt: true,
+        stoppedAt: true,
+        pending: true,
+        inProgress: true,
+        completed: true,
+        failed: true,
         createdAt: true,
       },
     });
@@ -3802,31 +3519,19 @@ app.post("/leads/:campaignContactId/override", async (req: Request, res: Respons
       const activeBatchJobs = await prisma.batchCallJob.findMany({
         where: {
           campaignId: campaignContact.campaignId,
-          status: 'RUNNING',
+          status: BatchCallStatus.RUNNING,
         },
       });
       
       for (const batchJob of activeBatchJobs) {
-        stopBatchJob(batchJob.id, overriddenBy);
-        
-        // Emit BATCH_CANCELLED event
-        const batchCancelledEvent: SSEEvent = {
-          type: 'BATCH_CANCELLED',
-          campaignId: campaignContact.campaignId,
-          contactId: '',
+        await prisma.batchCallJob.update({
+          where: { id: batchJob.id },
           data: {
-            batchJobId: batchJob.id,
-            currentIndex: batchJob.currentIndex,
-            totalLeads: batchJob.totalLeads,
-            reason: `Human override: ${overrideReason || 'Batch stopped by operator'}`,
+            status: BatchCallStatus.STOPPED,
+            stoppedAt: new Date(),
           },
-        };
-        
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('[SSE] BATCH_CANCELLED (human override) payload:', JSON.stringify(batchCancelledEvent, null, 2));
-        }
-        
-        eventBus.emit('event', batchCancelledEvent);
+        });
+        console.log(`[BATCH] Batch ${batchJob.id} stopped (human override)`);
       }
     }
 

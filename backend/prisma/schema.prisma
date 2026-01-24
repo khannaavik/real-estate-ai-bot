@@ -158,21 +158,17 @@ model AILearningPattern {
 }
 
 model BatchCallJob {
-  id            String    @id @default(cuid())
-  campaignId    String
-  status        String
-  currentIndex  Int       @default(0)
-  totalLeads    Int
-  cooldownHours Int
-  maxRetries    Int
-  startedAt     DateTime?
-  pausedAt      DateTime?
-  completedAt   DateTime?
-  cancelledAt   DateTime?
-  cancelledBy   String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  campaign      Campaign  @relation(fields: [campaignId], references: [id])
+  id         String          @id @default(cuid())
+  campaignId String
+  status     BatchCallStatus @default(QUEUED)
+  pending    Int             @default(0)
+  inProgress Int             @default(0)
+  completed  Int             @default(0)
+  failed     Int             @default(0)
+  startedAt  DateTime?
+  stoppedAt  DateTime?
+  createdAt  DateTime        @default(now())
+  campaign   Campaign        @relation(fields: [campaignId], references: [id])
 }
 
 model CsvImportJob {
@@ -239,4 +235,11 @@ enum CsvImportStatus {
   PROCESSING
   COMPLETED
   FAILED
+}
+
+enum BatchCallStatus {
+  QUEUED
+  RUNNING
+  STOPPED
+  COMPLETED
 }

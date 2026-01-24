@@ -67,6 +67,8 @@ export default function Home() {
   const [contacts, setContacts] = useState<CampaignContact[]>([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [deleteCampaignTarget, setDeleteCampaignTarget] = useState<Campaign | null>(null);
+  const [isDeletingCampaign, setIsDeletingCampaign] = useState(false);
   const [showScoreModal, setShowScoreModal] = useState(false);
   const [activeCallLogId, setActiveCallLogId] = useState<string | null>(null);
   const endCallTimeoutsRef = useRef<Record<string, number>>({});
@@ -138,7 +140,14 @@ export default function Home() {
   const [csvUploadSuccess, setCsvUploadSuccess] = useState<{ leadCount: number } | null>(null);
   const [csvBatchId, setCsvBatchId] = useState<string | null>(null);
   const [isStartingBatch, setIsStartingBatch] = useState(false);
-  const [batchStatus, setBatchStatus] = useState<{ total: number; pending: number; inProgress: number; completed: number; failed: number } | null>(null);
+  const [isStoppingBatch, setIsStoppingBatch] = useState(false);
+  const [batchStatus, setBatchStatus] = useState<{
+    status: "QUEUED" | "RUNNING" | "STOPPED" | "COMPLETED";
+    pending: number;
+    inProgress: number;
+    completed: number;
+    failed: number;
+  } | null>(null);
   const [batchStatusError, setBatchStatusError] = useState<string | null>(null);
   const [lastImportSummary, setLastImportSummary] = useState<{ imported: number; skipped: number } | null>(null);
   const [isBatchPolling, setIsBatchPolling] = useState(false);
@@ -1247,6 +1256,39 @@ export default function Home() {
     }
   }
 
+  async function deleteCampaign(campaign: Campaign) {
+    setIsDeletingCampaign(true);
+    try {
+      if (mockMode) {
+        setCampaigns((prev) => prev.filter((c) => c.id !== campaign.id));
+        if (selectedCampaign?.id === campaign.id) {
+          setSelectedCampaign(null);
+          setContacts([]);
+          setBatchStatus(null);
+        }
+        setToast("(Mock) Campaign deleted");
+        return;
+      }
+
+      await apiFetch(`${API_BASE}/api/campaigns/${campaign.id}`, { method: "DELETE" });
+
+      if (selectedCampaign?.id === campaign.id) {
+        setSelectedCampaign(null);
+        setContacts([]);
+        setBatchStatus(null);
+      }
+
+      await fetchCampaigns();
+      setToast("Campaign deleted");
+    } catch (err: any) {
+      const errorMessage = err?.message || String(err);
+      console.error("deleteCampaign error:", errorMessage);
+      setToast(errorMessage.includes("HTTP") ? errorMessage : "Failed to delete campaign.");
+    } finally {
+      setIsDeletingCampaign(false);
+    }
+  }
+
   async function openCampaign(c: Campaign) {
     setSelectedCampaign(c);
     setLoading(true);
@@ -1411,28 +1453,34 @@ export default function Home() {
     await endCallByCallId(session.callId, campaignContactId);
   }
 
-  // Check if there are eligible leads for batch calling
-  const hasEligibleLeads = React.useMemo(() => {
+  // Check if there are any leads for batch calling
+  const hasLeads = React.useMemo(() => {
     if (!selectedCampaign) return false;
-    // Eligible: NOT_PICK, COLD, WARM (excluding HOT)
-    return contacts.some(cc => 
-      cc.status === 'NOT_PICK' || cc.status === 'COLD' || cc.status === 'WARM'
-    );
-  }, [contacts, selectedCampaign]);
+    if (typeof selectedCampaign.totalLeads === "number") {
+      return selectedCampaign.totalLeads > 0;
+    }
+    return contacts.length > 0;
+  }, [contacts.length, selectedCampaign]);
 
-  const isBatchRunning = (batchStatus?.pending ?? 0) > 0 || (batchStatus?.inProgress ?? 0) > 0;
-  const showLegacyBatchControls = !!batchJob && !batchStatus;
-  const batchProgressPercent = batchStatus && batchStatus.total > 0
-    ? Math.round(((batchStatus.completed + batchStatus.failed) / batchStatus.total) * 100)
+  const isBatchRunning = batchStatus?.status === "RUNNING";
+  const isBatchActive = batchStatus?.status === "RUNNING" || batchStatus?.status === "QUEUED";
+  const showLegacyBatchControls = false;
+  const batchTotal =
+    (batchStatus?.pending ?? 0) +
+    (batchStatus?.inProgress ?? 0) +
+    (batchStatus?.completed ?? 0) +
+    (batchStatus?.failed ?? 0);
+  const batchProgressPercent = batchTotal > 0
+    ? Math.round(((batchStatus?.completed ?? 0) + (batchStatus?.failed ?? 0)) / batchTotal * 100)
     : 0;
 
   async function fetchBatchStatus(): Promise<void> {
     if (!selectedCampaign || mockMode) return;
     try {
       const data: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/batch-status`);
-      if (typeof data?.total === 'number') {
+      if (data?.status) {
         setBatchStatus({
-          total: data.total,
+          status: data.status,
           pending: data.pending ?? 0,
           inProgress: data.inProgress ?? 0,
           completed: data.completed ?? 0,
@@ -1459,7 +1507,7 @@ export default function Home() {
     if (batchPollingRef.current) return;
     batchPollingRef.current = window.setInterval(() => {
       fetchBatchStatus();
-    }, 4000);
+    }, 5000);
     setIsBatchPolling(true);
   };
 
@@ -1481,15 +1529,15 @@ export default function Home() {
 
   useEffect(() => {
     if (!selectedCampaign || mockMode) return;
-    if ((batchStatus?.pending ?? 0) > 0 || (batchStatus?.inProgress ?? 0) > 0) {
+    if (batchStatus?.status === "RUNNING") {
       startBatchPolling();
     } else {
       stopBatchPolling();
     }
-  }, [batchStatus?.pending, batchStatus?.inProgress, selectedCampaign?.id, mockMode]);
+  }, [batchStatus?.status, selectedCampaign?.id, mockMode]);
 
   // Sticky CTA visibility and animation state
-  const showStickyCTA = selectedCampaign && hasEligibleLeads && !isBatchRunning;
+  const showStickyCTA = selectedCampaign && hasLeads && !isBatchRunning;
   const [stickyCTAAnimating, setStickyCTAAnimating] = useState(false);
 
   // Toggle low-interest leads visibility
@@ -1542,13 +1590,13 @@ export default function Home() {
       return;
     }
 
-    if (isBatchRunning) {
-      setToast('A batch is already running. Please wait for it to complete.');
+    if (isBatchActive) {
+      setToast('A batch is already active. Please wait for it to stop.');
       return;
     }
 
-    if (!hasEligibleLeads) {
-      setToast('No eligible leads found. Eligible leads must have status NOT_PICK, COLD, or WARM.');
+    if (!hasLeads) {
+      setToast('No leads found for this campaign.');
       return;
     }
 
@@ -1558,10 +1606,8 @@ export default function Home() {
     try {
       if (mockMode) {
         setToast('(Mock) Batch call started');
-        const total = contacts.filter(cc =>
-          cc.status === 'NOT_PICK' || cc.status === 'COLD' || cc.status === 'WARM'
-        ).length;
-        setBatchStatus({ total, pending: total, inProgress: 0, completed: 0, failed: 0 });
+        const total = contacts.length;
+        setBatchStatus({ status: "RUNNING", pending: total, inProgress: 0, completed: 0, failed: 0 });
         return;
       }
 
@@ -1569,8 +1615,7 @@ export default function Home() {
         method: 'POST',
       });
 
-      if (data?.ok) {
-        const queued = typeof data.queued === 'number' ? data.queued : 0;
+      if (data?.batchId) {
         setToast('Batch calling started');
         fetchBatchStatus();
         if (selectedCampaign) {
@@ -1585,6 +1630,44 @@ export default function Home() {
       setToast(errorMessage.includes('HTTP') ? errorMessage : 'Failed to start batch call.');
     } finally {
       setIsStartingBatch(false);
+    }
+  }
+
+  async function stopBatchCall() {
+    if (!selectedCampaign) {
+      setToast('Please select a campaign first');
+      return;
+    }
+
+    if (!isBatchRunning) {
+      setToast('No batch is currently running.');
+      return;
+    }
+
+    setIsStoppingBatch(true);
+    try {
+      if (mockMode) {
+        setBatchStatus({ status: "STOPPED", pending: 0, inProgress: 0, completed: 0, failed: 0 });
+        setToast('(Mock) Batch stopped');
+        return;
+      }
+
+      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/stop-batch`, {
+        method: 'POST',
+      });
+
+      if (res?.success) {
+        setToast('Batch stopped');
+        fetchBatchStatus();
+      } else {
+        setToast('Failed to stop batch call');
+      }
+    } catch (err: any) {
+      const errorMessage = err?.message || String(err);
+      console.error('stopBatchCall error:', errorMessage);
+      setToast(errorMessage.includes('HTTP') ? errorMessage : 'Failed to stop batch call.');
+    } finally {
+      setIsStoppingBatch(false);
     }
   }
 
@@ -1983,29 +2066,44 @@ export default function Home() {
                         const hotCount = c.hotLeadsCount ?? 0;
                         
                         return (
-                          <button
+                          <div
                             key={c.id}
-                            className={`w-full text-left p-2.5 rounded-lg transition-all ${
+                            className={`w-full p-2.5 rounded-lg transition-all flex items-start justify-between gap-2 ${
                               isSelected
                                 ? 'bg-blue-50 border-l-4 border-blue-600 shadow-sm'
                                 : 'hover:bg-gray-50 border-l-4 border-transparent'
                             }`}
-                            onClick={() => {
-                              openCampaign(c);
-                              setCampaignDrawerOpen(false);
-                            }}
                           >
-                            <div className="text-sm font-semibold text-gray-900 mb-1">{c.name}</div>
-                            <div className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
-                              {hotCount > 0 && <span className="text-red-600 font-medium">🔥 {hotCount}</span>}
-                              {hotCount > 0 && (warmCount > 0 || totalLeads - hotCount - warmCount > 0) && <span className="text-gray-300">•</span>}
-                              {warmCount > 0 && <span className="text-amber-600">🟡 {warmCount}</span>}
-                              {warmCount > 0 && totalLeads - hotCount - warmCount > 0 && <span className="text-gray-300">•</span>}
-                              {totalLeads - hotCount - warmCount > 0 && (
-                                <span className="text-gray-500">New {totalLeads - hotCount - warmCount}</span>
-                              )}
-                            </div>
-                          </button>
+                            <button
+                              className="flex-1 text-left"
+                              onClick={() => {
+                                openCampaign(c);
+                                setCampaignDrawerOpen(false);
+                              }}
+                            >
+                              <div className="text-sm font-semibold text-gray-900 mb-1">{c.name}</div>
+                              <div className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
+                                {hotCount > 0 && <span className="text-red-600 font-medium">🔥 {hotCount}</span>}
+                                {hotCount > 0 && (warmCount > 0 || totalLeads - hotCount - warmCount > 0) && <span className="text-gray-300">•</span>}
+                                {warmCount > 0 && <span className="text-amber-600">🟡 {warmCount}</span>}
+                                {warmCount > 0 && totalLeads - hotCount - warmCount > 0 && <span className="text-gray-300">•</span>}
+                                {totalLeads - hotCount - warmCount > 0 && (
+                                  <span className="text-gray-500">New {totalLeads - hotCount - warmCount}</span>
+                                )}
+                              </div>
+                            </button>
+                            <button
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setDeleteCampaignTarget(c);
+                              }}
+                              className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                              title={`Delete ${c.name}`}
+                              aria-label={`Delete ${c.name}`}
+                            >
+                              <span aria-hidden="true">🗑️</span>
+                            </button>
+                          </div>
                         );
                       })}
                   </div>
@@ -2054,27 +2152,42 @@ export default function Home() {
                     const hotCount = c.hotLeadsCount ?? 0;
                     
                     return (
-                      <button
+                      <div
                         key={c.id}
-                        className={`w-full text-left p-2.5 rounded-lg transition-all ${
+                        className={`w-full p-2.5 rounded-lg transition-all flex items-start justify-between gap-2 ${
                           isSelected
                             ? 'bg-blue-50 border-l-4 border-blue-600 shadow-sm'
                             : 'hover:bg-gray-50 border-l-4 border-transparent'
                         }`}
-                        onClick={() => openCampaign(c)}
                       >
-                        {/* Campaign name and counts in single compact block */}
-                        <div className="text-sm font-semibold text-gray-900 mb-1">{c.name}</div>
-                        <div className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
-                          {hotCount > 0 && <span className="text-red-600 font-medium">🔥 {hotCount}</span>}
-                          {hotCount > 0 && (warmCount > 0 || totalLeads - hotCount - warmCount > 0) && <span className="text-gray-300">•</span>}
-                          {warmCount > 0 && <span className="text-amber-600">🟡 {warmCount}</span>}
-                          {warmCount > 0 && totalLeads - hotCount - warmCount > 0 && <span className="text-gray-300">•</span>}
-                          {totalLeads - hotCount - warmCount > 0 && (
-                            <span className="text-gray-500">New {totalLeads - hotCount - warmCount}</span>
-                          )}
-                        </div>
-                      </button>
+                        <button
+                          className="flex-1 text-left"
+                          onClick={() => openCampaign(c)}
+                        >
+                          {/* Campaign name and counts in single compact block */}
+                          <div className="text-sm font-semibold text-gray-900 mb-1">{c.name}</div>
+                          <div className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap">
+                            {hotCount > 0 && <span className="text-red-600 font-medium">🔥 {hotCount}</span>}
+                            {hotCount > 0 && (warmCount > 0 || totalLeads - hotCount - warmCount > 0) && <span className="text-gray-300">•</span>}
+                            {warmCount > 0 && <span className="text-amber-600">🟡 {warmCount}</span>}
+                            {warmCount > 0 && totalLeads - hotCount - warmCount > 0 && <span className="text-gray-300">•</span>}
+                            {totalLeads - hotCount - warmCount > 0 && (
+                              <span className="text-gray-500">New {totalLeads - hotCount - warmCount}</span>
+                            )}
+                          </div>
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDeleteCampaignTarget(c);
+                          }}
+                          className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                          title={`Delete ${c.name}`}
+                          aria-label={`Delete ${c.name}`}
+                        >
+                          <span aria-hidden="true">🗑️</span>
+                        </button>
+                      </div>
                     );
                   })}
               </div>
@@ -2131,13 +2244,13 @@ export default function Home() {
                         <span className="hidden sm:inline">+ Add Lead</span>
                         <span className="sm:hidden">+</span>
                       </button>
-                      {/* Start AI Calling Button - Primary */}
-                      {selectedCampaign && (selectedCampaign.totalLeads ?? 0) > 0 && !isBatchRunning && (
+                      {/* Start Batch Call Button */}
+                      {selectedCampaign && hasLeads && !isBatchRunning && (
                         <button
                           onClick={startBatchCall}
-                          disabled={isStartingBatch || isBatchRunning}
+                          disabled={isStartingBatch || isBatchActive}
                           className="px-2 sm:px-3 py-1.5 bg-emerald-600 text-white text-xs sm:text-sm font-semibold rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative group"
-                          title="Start AI calling for all eligible leads"
+                          title="Start batch calling"
                         >
                           {isStartingBatch ? (
                             <>
@@ -2150,8 +2263,28 @@ export default function Home() {
                             </>
                           ) : (
                             <>
-                              <span className="hidden sm:inline">🤖 Start AI Calling</span>
-                              <span className="sm:hidden">🤖</span>
+                              <span className="hidden sm:inline">▶ Start Batch Call</span>
+                              <span className="sm:hidden">▶</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                      {selectedCampaign && isBatchRunning && (
+                        <button
+                          onClick={stopBatchCall}
+                          disabled={isStoppingBatch}
+                          className="px-2 sm:px-3 py-1.5 bg-red-600 text-white text-xs sm:text-sm font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          title="Stop batch calling"
+                        >
+                          {isStoppingBatch ? (
+                            <>
+                              <span className="hidden sm:inline">Stopping...</span>
+                              <span className="sm:hidden">...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="hidden sm:inline">⏹ Stop Batch Call</span>
+                              <span className="sm:hidden">⏹</span>
                             </>
                           )}
                         </button>
@@ -2173,7 +2306,7 @@ export default function Home() {
                     Pending {batchStatus?.pending ?? 0} • In Progress {batchStatus?.inProgress ?? 0} • Completed {batchStatus?.completed ?? 0} • Failed {batchStatus?.failed ?? 0}
                   </div>
                   <div className="text-gray-500">
-                    {isBatchRunning ? 'Batch running' : 'Idle'}
+                    Status: {batchStatus?.status ?? 'STOPPED'}
                     {isBatchPolling ? ' • Live' : ''}
                   </div>
                 </div>
@@ -2237,7 +2370,7 @@ export default function Home() {
             {/* Scrollable Content Area */}
             <div className={`overflow-y-auto h-[calc(100vh-240px)] px-6 py-4 ${
               // Add bottom padding on desktop when sticky CTA is visible
-              selectedCampaign && hasEligibleLeads && !isBatchRunning
+              selectedCampaign && hasLeads && !isBatchRunning
                 ? 'lg:pb-24'
                 : ''
             }`}>
@@ -2289,7 +2422,7 @@ export default function Home() {
                       </div>
                       <button
                         onClick={startBatchCall}
-                        disabled={isStartingBatch || isBatchRunning}
+                        disabled={isStartingBatch || isBatchActive}
                         className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                       >
                         {isStartingBatch ? (
@@ -2302,8 +2435,8 @@ export default function Home() {
                           </>
                         ) : (
                           <>
-                            <span>🤖</span>
-                            Start AI Calling
+                            <span>▶</span>
+                            Start Batch Call
                           </>
                         )}
                       </button>
@@ -2586,7 +2719,7 @@ export default function Home() {
             <div className="h-full px-4 flex items-center">
               <button
                 onClick={startBatchCall}
-                disabled={isStartingBatch || isBatchRunning}
+                disabled={isStartingBatch || isBatchActive}
                 className="w-full h-full bg-emerald-600 text-white text-base font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
                 style={{
                   transition: prefersReducedMotion ? 'none' : 'all 120ms ease-out'
@@ -2625,7 +2758,7 @@ export default function Home() {
             <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-4 min-w-[280px]">
               <button
                 onClick={startBatchCall}
-                disabled={isStartingBatch || isBatchRunning}
+                disabled={isStartingBatch || isBatchActive}
                 className="w-full px-6 py-3 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 active:scale-[0.97]"
                 style={{
                   transition: prefersReducedMotion ? 'none' : 'all 120ms ease-out'
@@ -2740,6 +2873,42 @@ export default function Home() {
 
       {toast && <div className="fixed right-6 bottom-6 bg-black text-white px-4 py-2 rounded shadow z-50">{toast}</div>}
 
+      {/* Delete Campaign Modal */}
+      {deleteCampaignTarget && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-2 text-red-600">
+              Delete campaign "{deleteCampaignTarget.name}"?
+            </h3>
+            <p className="text-sm text-gray-700 mb-4">
+              This will permanently remove all leads and call history.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                className="px-4 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded hover:bg-gray-300"
+                onClick={() => setDeleteCampaignTarget(null)}
+                disabled={isDeletingCampaign}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 disabled:opacity-50"
+                onClick={async () => {
+                  const target = deleteCampaignTarget;
+                  setDeleteCampaignTarget(null);
+                  if (target) {
+                    await deleteCampaign(target);
+                  }
+                }}
+                disabled={isDeletingCampaign}
+              >
+                {isDeletingCampaign ? "Deleting..." : "Delete Campaign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CSV Upload Modal */}
       {showCsvUploadModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -2805,9 +2974,9 @@ export default function Home() {
                           }, 500);
                         }
                       }}
-                      disabled={isStartingBatch || isBatchRunning}
+                      disabled={isStartingBatch || isBatchActive}
                     >
-                      {isStartingBatch ? 'Starting...' : '🤖 Start AI Calling'}
+                      {isStartingBatch ? 'Starting...' : '▶ Start Batch Call'}
                     </button>
                   </div>
                 )}
