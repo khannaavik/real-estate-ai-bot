@@ -15,7 +15,10 @@ function normalizeIndianPhone(raw: string): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  const digitsOnly = trimmed.replace(/\D/g, "");
+  const scientificNotation = /^[+-]?\d+(\.\d+)?[eE][+-]?\d+$/;
+  const digitsOnly = scientificNotation.test(trimmed)
+    ? String(Math.trunc(Number(trimmed)))
+    : trimmed.replace(/\D/g, "");
 
   if (digitsOnly.length === 10) {
     return `+91${digitsOnly}`;
