@@ -2651,7 +2651,10 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
 
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      select: { id: true },
+      select: {
+        id: true,
+        batchActive: true,
+      },
     });
 
     if (!campaign) {
