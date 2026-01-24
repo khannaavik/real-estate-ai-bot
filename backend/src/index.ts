@@ -32,6 +32,7 @@ import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMa
 import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCallLive } from "./liveCallMonitor";
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./services/aiCallAnalysis";
 import { startDryRunBatch } from "./services/dryRunBatchCaller";
+import { startDryRunCallWorker } from "./services/dryRunCallWorker";
 import { enqueueCsvJob } from "./services/csvImportWorker";
 
 
@@ -44,6 +45,7 @@ dotenv.config();
 // Startup logging
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
+const DRY_RUN_CALLS = process.env.DRY_RUN_CALLS !== "false";
 
 console.log('[STARTUP] Environment:', NODE_ENV);
 console.log('[STARTUP] PORT:', PORT, process.env.PORT ? '(from env)' : '(fallback to 4000)');
@@ -2669,6 +2671,11 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       where: { id: campaignId },
       data: { batchActive: true },
     });
+
+    if (DRY_RUN_CALLS) {
+      void startDryRunCallWorker(campaignId);
+      return res.json({ started: true, mode: "DRY_RUN", batchId: campaignId });
+    }
 
     void startDryRunBatch(campaignId);
 
