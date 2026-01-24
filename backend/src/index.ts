@@ -2705,7 +2705,7 @@ apiRoutes.post("/campaigns/:campaignId/stop-batch", async (req: Request, res: Re
       data: { batchActive: false, batchState: BatchState.STOPPED },
     });
 
-    console.log("[BATCH] Stopped");
+    console.log(`[BATCH] Stopped campaign ${campaignId}`);
     res.json({ status: "stopped" });
   } catch (err: any) {
     console.error("Stop batch error:", err);
@@ -2727,7 +2727,7 @@ apiRoutes.post("/campaigns/:campaignId/pause-batch", async (req: Request, res: R
       data: { batchState: BatchState.PAUSED, batchActive: true },
     });
 
-    console.log("[BATCH] Paused");
+    console.log(`[BATCH] Paused campaign ${campaignId}`);
     res.json({ status: "paused" });
   } catch (err: any) {
     console.error("Pause batch error:", err);
@@ -2750,11 +2750,78 @@ apiRoutes.post("/campaigns/:campaignId/resume-batch", async (req: Request, res: 
     });
 
     void startDryRunCallWorker(campaignId);
-    console.log("[BATCH] Resumed");
+    console.log(`[BATCH] Resumed campaign ${campaignId}`);
     res.json({ status: "resumed" });
   } catch (err: any) {
     console.error("Resume batch error:", err);
     res.status(200).json({ status: "resumed" });
+  }
+});
+
+// POST /api/campaigns/:campaignId/pause - Pause batch
+apiRoutes.post("/campaigns/:campaignId/pause", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { batchState: BatchState.PAUSED, batchActive: true },
+    });
+
+    console.log(`[BATCH] Paused campaign ${campaignId}`);
+    res.json({ status: "paused" });
+  } catch (err: any) {
+    console.error("Pause batch error:", err);
+    res.status(200).json({ status: "paused" });
+  }
+});
+
+// POST /api/campaigns/:campaignId/resume - Resume batch
+apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { batchState: BatchState.RUNNING, batchActive: true },
+    });
+
+    void startDryRunCallWorker(campaignId);
+    console.log(`[BATCH] Resumed campaign ${campaignId}`);
+    res.json({ status: "resumed" });
+  } catch (err: any) {
+    console.error("Resume batch error:", err);
+    res.status(200).json({ status: "resumed" });
+  }
+});
+
+// POST /api/campaigns/:campaignId/stop - Stop batch
+apiRoutes.post("/campaigns/:campaignId/stop", async (req: Request, res: Response) => {
+  try {
+    const { campaignId } = req.params;
+
+    if (!campaignId) {
+      return res.status(400).json({ ok: false, error: "campaignId is required" });
+    }
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { batchActive: false, batchState: BatchState.STOPPED },
+    });
+
+    console.log(`[BATCH] Stopped campaign ${campaignId}`);
+    res.json({ status: "stopped" });
+  } catch (err: any) {
+    console.error("Stop batch error:", err);
+    res.status(200).json({ status: "stopped" });
   }
 });
 

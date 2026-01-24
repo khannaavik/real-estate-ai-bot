@@ -119,7 +119,7 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
 
     for (const contact of contacts) {
       try {
-        const campaign = await prisma.campaign.findUnique({
+        let campaign = await prisma.campaign.findUnique({
           where: { id: campaignId },
           select: {
             batchActive: true,
@@ -135,9 +135,18 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           break;
         }
 
-        if (campaign.batchState === "PAUSED") {
+        while (campaign.batchState === "PAUSED") {
           console.log("[BATCH] Paused");
-          break;
+          await sleep(1000);
+          const refreshedCampaign = await prisma.campaign.findUnique({
+            where: { id: campaignId },
+            select: { batchActive: true, batchState: true },
+          });
+          if (!refreshedCampaign?.batchActive || refreshedCampaign.batchState === "STOPPED") {
+            console.log("[BATCH] Stopped");
+            return;
+          }
+          campaign.batchState = refreshedCampaign.batchState;
         }
 
         await prisma.campaignContact.update({
