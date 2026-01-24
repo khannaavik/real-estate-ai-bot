@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import twilio from "twilio";
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { CallStatus } from "@prisma/client";
+import { CallLifecycleStatus, CallStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { pinAuthMiddleware } from './middleware/pinAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
@@ -1773,7 +1773,7 @@ apiRoutes.post("/call/end/:callId", async (req: Request, res: Response) => {
 
     const durationSec = Math.floor(Math.random() * 31) + 10;
     const callStatusForAnalysis: AICallStatus =
-      existingCall.status === "NO_ANSWER" ? "NO_ANSWER" : "PICKED";
+      existingCall.status === CallLifecycleStatus.NO_ANSWER ? "NO_ANSWER" : "PICKED";
 
     const [campaign, lead] = await Promise.all([
       prisma.campaign.findUnique({
@@ -1798,7 +1798,7 @@ apiRoutes.post("/call/end/:callId", async (req: Request, res: Response) => {
     const updatedCall = await prisma.call.update({
       where: { id: existingCall.id },
       data: {
-        status: "COMPLETED",
+        status: CallLifecycleStatus.COMPLETED,
         durationSec,
         interestLevel: aiResult.interestLevel,
         summary: aiResult.summary,
@@ -1886,7 +1886,7 @@ apiRoutes.get("/analytics/overview", async (_req: Request, res: Response) => {
       hotLeadCalls,
     ] = await Promise.all([
       prisma.call.count(),
-      prisma.call.count({ where: { status: "COMPLETED" } }),
+      prisma.call.count({ where: { status: CallLifecycleStatus.COMPLETED } }),
       prisma.call.count({ where: { status: "NO_ANSWER" } }),
       prisma.call.count({ where: { interestLevel: "COLD" } }),
       prisma.call.count({ where: { interestLevel: "WARM" } }),

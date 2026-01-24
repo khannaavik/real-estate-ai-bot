@@ -1,7 +1,6 @@
 import { prisma } from "../prisma";
+import { CallLifecycleStatus, CallStatus } from "@prisma/client";
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./aiCallAnalysis";
-
-type LeadCallStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,12 +24,14 @@ async function startMockCall(leadId: string): Promise<{ callId: string; status: 
     data: {
       campaignId: campaignContact.campaignId,
       leadId: campaignContact.id,
-      status: "STARTED",
+      status: CallLifecycleStatus.STARTED,
     },
   });
 
   const pickedUp = Math.random() < 0.7;
-  const nextStatus: "PICKED" | "NO_ANSWER" = pickedUp ? "PICKED" : "NO_ANSWER";
+  const nextStatus: CallLifecycleStatus = pickedUp
+    ? CallLifecycleStatus.PICKED
+    : CallLifecycleStatus.NO_ANSWER;
 
   await prisma.call.update({
     where: { id: call.id },
@@ -56,7 +57,7 @@ async function endMockCall(callId: string): Promise<void> {
 
   const durationSec = Math.floor(Math.random() * 31) + 10;
   const callStatusForAnalysis: AICallStatus =
-    existingCall.status === "NO_ANSWER" ? "NO_ANSWER" : "PICKED";
+    existingCall.status === CallLifecycleStatus.NO_ANSWER ? "NO_ANSWER" : "PICKED";
 
   const [campaign, lead] = await Promise.all([
     prisma.campaign.findUnique({
@@ -81,7 +82,7 @@ async function endMockCall(callId: string): Promise<void> {
   await prisma.call.update({
     where: { id: existingCall.id },
     data: {
-      status: "COMPLETED",
+      status: CallLifecycleStatus.COMPLETED,
       durationSec,
       interestLevel: aiResult.interestLevel,
       summary: aiResult.summary,
@@ -106,10 +107,11 @@ async function endMockCall(callId: string): Promise<void> {
 }
 
 export async function processNextLead(campaignId: string): Promise<boolean> {
+  const pendingOrNull = [{ callStatus: CallStatus.PENDING }, { callStatus: null }];
   const lead = await prisma.campaignContact.findFirst({
     where: {
       campaignId,
-      callStatus: { in: ["PENDING", null as unknown as LeadCallStatus] },
+      OR: pendingOrNull,
     },
     orderBy: { createdAt: "asc" },
   });
@@ -119,9 +121,9 @@ export async function processNextLead(campaignId: string): Promise<boolean> {
   const claim = await prisma.campaignContact.updateMany({
     where: {
       id: lead.id,
-      callStatus: { in: ["PENDING", null as unknown as LeadCallStatus] },
+      OR: pendingOrNull,
     },
-    data: { callStatus: "IN_PROGRESS" },
+    data: { callStatus: CallStatus.IN_PROGRESS },
   });
 
   if (claim.count === 0) {
@@ -134,12 +136,12 @@ export async function processNextLead(campaignId: string): Promise<boolean> {
     await endMockCall(callId);
     await prisma.campaignContact.update({
       where: { id: lead.id },
-      data: { callStatus: "COMPLETED" },
+      data: { callStatus: CallStatus.COMPLETED },
     });
   } catch (err) {
     await prisma.campaignContact.update({
       where: { id: lead.id },
-      data: { callStatus: "FAILED" },
+      data: { callStatus: CallStatus.FAILED },
     });
   }
 
@@ -177,9 +179,9 @@ export async function resumeActiveBatches(): Promise<void> {
     await prisma.campaignContact.updateMany({
       where: {
         campaignId: campaign.id,
-        callStatus: "IN_PROGRESS",
+        callStatus: CallStatus.IN_PROGRESS,
       },
-      data: { callStatus: "PENDING" },
+      data: { callStatus: CallStatus.PENDING },
     });
 
     void startBatchProcessing(campaign.id);
