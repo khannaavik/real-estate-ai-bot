@@ -1,3 +1,4 @@
+import OpenAI from "openai";
 import { prisma } from "../prisma";
 
 function sleep(ms: number): Promise<void> {
@@ -17,6 +18,71 @@ function randomBetweenSeconds(minSeconds: number, maxSeconds: number): number {
 const activeDryRunBatches = new Set<string>();
 
 type DryRunResult = "COMPLETED" | "NO_ANSWER" | "BUSY" | "FAILED";
+type DryRunInterest = "HOT" | "WARM" | "COLD" | "NONE";
+type DryRunNextAction = "CALLBACK" | "IGNORE" | "FOLLOW_UP";
+
+type AiCallAnalysis = {
+  summary: string;
+  interestLevel: "HOT" | "WARM" | "COLD";
+  nextAction: DryRunNextAction;
+};
+
+function getOpenAiClient(): OpenAI | null {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  return new OpenAI({ apiKey });
+}
+
+function safeParseJson(content: string): AiCallAnalysis | null {
+  try {
+    const parsed = JSON.parse(content) as AiCallAnalysis;
+    if (!parsed?.summary || !parsed?.interestLevel || !parsed?.nextAction) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function generateAiSummary(contactPhone: string): Promise<AiCallAnalysis | null> {
+  const client = getOpenAiClient();
+  if (!client) return null;
+
+  const model = process.env.OPENAI_MODEL || "gpt-4.1";
+  const prompt = [
+    "You are analyzing a simulated outbound call.",
+    "Return JSON only with fields: summary, interestLevel, nextAction.",
+    "interestLevel must be one of: HOT, WARM, COLD.",
+    "nextAction must be one of: CALLBACK, IGNORE, FOLLOW_UP.",
+    "Keep summary to 1-2 sentences, realistic and concise.",
+    `Contact phone: ${contactPhone || "unknown"}.`,
+  ].join("\n");
+
+  try {
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 120,
+      temperature: 0.6,
+    });
+
+    const content = completion.choices[0]?.message?.content?.trim();
+    if (!content) return null;
+
+    const parsed = safeParseJson(content);
+    if (parsed) {
+      console.log("[AI] Summary generated");
+      console.log(`[AI] Interest: ${parsed.interestLevel}`);
+      return parsed;
+    }
+
+    return null;
+  } catch (err) {
+    console.error("[AI] Summary generation failed", err);
+    return null;
+  }
+}
 
 export async function startDryRunCallWorker(campaignId: string): Promise<void> {
   if (activeDryRunBatches.has(campaignId)) return;
@@ -59,9 +125,9 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           data: { callStatus: "IN_PROGRESS" },
         });
 
-        console.log(`[DRY-RUN] Calling contact ${contact.contact?.phone || contact.id}`);
+        console.log(`[DRY-RUN] Calling ${contact.contact?.phone || contact.id}`);
 
-        await sleep(randomBetweenMs(1, 3));
+        await sleep(randomBetweenMs(5, 15));
 
         const roll = Math.random();
         const result: DryRunResult =
@@ -77,21 +143,25 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
         const durationSeconds =
           result === "COMPLETED" ? randomBetweenSeconds(30, 180) : 0;
 
-        const interestLevels = ["HOT", "WARM", "COLD"] as const;
-        const interestLevel =
-          result === "COMPLETED"
-            ? interestLevels[Math.floor(Math.random() * interestLevels.length)]
-            : null;
-
         const transcript =
           result === "COMPLETED"
             ? "Dry run transcript: simulated customer conversation."
             : null;
 
-        const aiSummary =
-          result === "COMPLETED"
-            ? "Dry run completed successfully"
-            : `Dry run result: ${result}`;
+        let interestLevel: DryRunInterest = "NONE";
+        let nextAction: DryRunNextAction =
+          result === "FAILED" ? "IGNORE" : "CALLBACK";
+        let aiSummary = `Dry run result: ${result}`;
+
+        if (result === "COMPLETED") {
+          const fallbackInterestLevels: DryRunInterest[] = ["HOT", "WARM", "COLD"];
+          const fallbackInterest =
+            fallbackInterestLevels[Math.floor(Math.random() * fallbackInterestLevels.length)];
+          const aiResult = await generateAiSummary(contact.contact?.phone || "");
+          interestLevel = aiResult?.interestLevel ?? fallbackInterest;
+          nextAction = aiResult?.nextAction ?? "FOLLOW_UP";
+          aiSummary = aiResult?.summary ?? "Dry run completed successfully";
+        }
 
         const callLogData: {
           campaignContactId: string;
@@ -110,7 +180,7 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           aiSummary,
         };
 
-        if (interestLevel) {
+        if (interestLevel !== "NONE") {
           callLogData.resultStatus = interestLevel;
         }
 
@@ -123,11 +193,18 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           data: {
             callStatus: result === "COMPLETED" ? "COMPLETED" : "FAILED",
             lastCallAt: endedAt,
-            ...(interestLevel ? { status: interestLevel } : {}),
+            ...(interestLevel !== "NONE" ? { status: interestLevel } : {}),
+            callResult: {
+              outcome: result,
+              interestLevel,
+              summary: aiSummary,
+              nextAction,
+              durationSec: durationSeconds,
+            },
           },
         });
 
-        console.log(`[DRY-RUN] Result: ${result} (${callLog.id})`);
+        console.log(`[DRY-RUN] Result: ${result}`);
       } catch (err) {
         console.error(`[DRY-RUN] Contact processing failed (${contact.id})`, err);
         try {

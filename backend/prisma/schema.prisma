@@ -63,6 +63,7 @@ model CampaignContact {
   callStatus            CallStatus          @default(PENDING)
   createdAt             DateTime            @default(now())
   lastCallAt            DateTime?
+  callResult            Json?
   convertedAt           DateTime?
   followUpAfterHours    Int?
   followUpChannel       String?
