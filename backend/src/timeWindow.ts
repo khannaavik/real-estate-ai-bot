@@ -132,3 +132,39 @@ export function formatNextCallTime(nextTime: Date, timezone: string = "Asia/Kolk
     hour12: true,
   });
 }
+
+/**
+ * Check if current time is within batch calling window (10:30 AM - 7:30 PM IST).
+ * Used for batch operations to ensure compliance with calling hours.
+ * 
+ * @param now - Date to check (defaults to current time)
+ * @param timezone - Timezone string (defaults to "Asia/Kolkata")
+ * @param startHour - Start hour (defaults to 10, from env CALL_START_HOUR)
+ * @param startMinute - Start minute (defaults to 30, from env CALL_START_MINUTE)
+ * @param endHour - End hour (defaults to 19, from env CALL_END_HOUR)
+ * @param endMinute - End minute (defaults to 30, from env CALL_END_MINUTE)
+ * @returns true if within batch calling window, false otherwise
+ */
+export function isWithinBatchCallWindow(
+  now: Date = new Date(),
+  timezone: string = "Asia/Kolkata",
+  startHour: number = parseInt(process.env.CALL_START_HOUR || "10", 10),
+  startMinute: number = parseInt(process.env.CALL_START_MINUTE || "30", 10),
+  endHour: number = parseInt(process.env.CALL_END_HOUR || "19", 10),
+  endMinute: number = parseInt(process.env.CALL_END_MINUTE || "30", 10)
+): boolean {
+  // Convert to target timezone
+  const localTime = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+  
+  // Get hours and minutes in local time
+  const hours = localTime.getHours();
+  const minutes = localTime.getMinutes();
+  const timeInMinutes = hours * 60 + minutes;
+  
+  // Define batch calling window in minutes from midnight
+  const windowStart = startHour * 60 + startMinute;
+  const windowEnd = endHour * 60 + endMinute;
+  
+  // Check if within window
+  return timeInMinutes >= windowStart && timeInMinutes <= windowEnd;
+}

@@ -5,6 +5,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Rate limiting configuration from environment variables
+const MAX_CONCURRENT_CALLS = parseInt(process.env.MAX_CONCURRENT_CALLS || "1", 10);
+const CALL_DELAY_MS = parseInt(process.env.CALL_DELAY_MS || "45000", 10);
+
 function randomBetweenMs(minSeconds: number, maxSeconds: number): number {
   const minMs = minSeconds * 1000;
   const maxMs = maxSeconds * 1000;
@@ -92,6 +96,7 @@ async function generateAiSummary(input: {
 
 export async function startDryRunCallWorker(campaignId: string): Promise<void> {
   try {
+    console.log(`[BATCH START] Campaign ${campaignId}`);
     console.log(`[DRY-RUN] Batch started ${campaignId}`);
 
     const contacts = await prisma.campaignContact.findMany({
@@ -108,10 +113,13 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
         where: { id: campaignId },
         data: { batchActive: false, batchState: "COMPLETED" },
       });
+      console.log(`[BATCH COMPLETE] Campaign ${campaignId}`);
       console.log(`[DRY-RUN] Batch completed ${campaignId}`);
       return;
     }
 
+    // Rate limiting: Ensure sequential execution (MAX_CONCURRENT_CALLS = 1)
+    // Process contacts one at a time
     for (const contact of contacts) {
       try {
         let campaign = await prisma.campaign.findUnique({
@@ -160,6 +168,7 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           data: { callStatus: "IN_PROGRESS" },
         });
 
+        console.log(`[CALL START] Lead ${contact.id}`);
         console.log(`[DRY-RUN] Calling ${contact.contact?.phone || contact.id}`);
 
         await sleep(randomBetweenMs(5, 15));
@@ -244,7 +253,14 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           },
         });
 
+        console.log(`[CALL END] Lead ${contact.id}`);
         console.log(`[DRY-RUN] Result: ${result}`);
+
+        // Rate limiting: Add delay after each call ends (before next call starts)
+        if (CALL_DELAY_MS > 0) {
+          console.log(`[RATE LIMIT] Waiting ${CALL_DELAY_MS / 1000}s before next call`);
+          await sleep(CALL_DELAY_MS);
+        }
       } catch (err) {
         console.error(`[DRY-RUN] Contact processing failed (${contact.id})`, err);
         try {
@@ -281,6 +297,7 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
         where: { id: campaignId },
         data: { batchActive: false, batchState: "COMPLETED" },
       });
+      console.log(`[BATCH COMPLETE] Campaign ${campaignId}`);
       console.log(`[BATCH] Completed campaign ${campaignId}`);
     }
   } catch (err) {

@@ -25,7 +25,7 @@ import { eventBus, type SSEEvent } from "./eventBus";
 import { decideNextConversationStep } from "./adaptiveConversationEngine";
 import { recordOutcomePattern as recordCallOutcomePattern, suggestOptimizedStrategy } from "./callOutcomeLearning";
 import { getRetryMetadata, updateRetryMetadata } from "./batchOrchestrator";
-import { getNextValidCallTime, formatNextCallTime } from "./timeWindow";
+import { getNextValidCallTime, formatNextCallTime, isWithinBatchCallWindow } from "./timeWindow";
 import { recordOutcomePattern, getTopPatterns } from "./outcomeLearning";
 import { selectAdaptiveStrategy, type AdaptiveStrategyContext, selectBestStrategyForAutoApply, type AutoApplyStrategyResult } from "./adaptiveStrategy";
 import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMainPitchPoints, getClosingLine, ScriptMode as ConversationScriptMode } from "./conversationStrategy";
@@ -2651,6 +2651,15 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       return res.status(400).json({ ok: false, error: "campaignId is required" });
     }
 
+    // Call Window Guard: Check if within allowed batch calling window (IST 10:30 AM - 7:30 PM)
+    if (!isWithinBatchCallWindow()) {
+      console.log("[BATCH BLOCKED] Outside allowed call window");
+      return res.status(400).json({
+        ok: false,
+        error: "Batch calls are only allowed between 10:30 AM and 7:30 PM IST",
+      });
+    }
+
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
       select: {
@@ -2672,6 +2681,8 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       where: { id: campaignId },
       data: { batchActive: true, batchState: BatchState.RUNNING },
     });
+
+    console.log(`[BATCH START] Campaign ${campaignId}`);
 
     if (DRY_RUN_CALLS) {
       void startDryRunCallWorker(campaignId);

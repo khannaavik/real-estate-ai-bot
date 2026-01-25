@@ -6,6 +6,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Rate limiting configuration from environment variables
+const MAX_CONCURRENT_CALLS = parseInt(process.env.MAX_CONCURRENT_CALLS || "1", 10);
+const CALL_DELAY_MS = parseInt(process.env.CALL_DELAY_MS || "45000", 10);
+
 function randomBetween(minMs: number, maxMs: number): number {
   return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
 }
@@ -130,6 +134,7 @@ export async function processNextLead(campaignId: string): Promise<boolean> {
   }
 
   try {
+    console.log(`[CALL START] Lead ${lead.id}`);
     const { callId } = await startMockCall(lead.id);
     await sleep(randomBetween(2000, 4000));
     await endMockCall(callId);
@@ -137,6 +142,7 @@ export async function processNextLead(campaignId: string): Promise<boolean> {
       where: { id: lead.id },
       data: { callStatus: CallStatus.COMPLETED },
     });
+    console.log(`[CALL END] Lead ${lead.id}`);
   } catch (err) {
     await prisma.campaignContact.update({
       where: { id: lead.id },
@@ -154,11 +160,23 @@ export async function startBatchProcessing(campaignId: string): Promise<void> {
   activeCampaigns.add(campaignId);
 
   try {
+    console.log(`[BATCH START] Campaign ${campaignId}`);
+    
     while (true) {
       const hasNext = await processNextLead(campaignId);
       if (!hasNext) break;
-      await sleep(randomBetween(5000, 10000));
+      
+      // Rate limiting: Add delay after each call ends (before next call starts)
+      if (CALL_DELAY_MS > 0) {
+        console.log(`[RATE LIMIT] Waiting ${CALL_DELAY_MS / 1000}s before next call`);
+        await sleep(CALL_DELAY_MS);
+      } else {
+        // Fallback to random delay if CALL_DELAY_MS is 0
+        await sleep(randomBetween(5000, 10000));
+      }
     }
+    
+    console.log(`[BATCH COMPLETE] Campaign ${campaignId}`);
   } finally {
     activeCampaigns.delete(campaignId);
     await prisma.campaign.update({
