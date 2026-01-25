@@ -2310,25 +2310,12 @@ export default function Home() {
                 </div>
               </div>
 
-            {/* Scrollable Content Area */}
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              {selectedCampaign && (
-                <div className="sticky top-0 z-30 bg-white border-b border-gray-200 -mx-6 px-6 py-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs text-gray-600">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        batchState === 'RUNNING'
-                          ? 'bg-green-100 text-green-700'
-                          : batchState === 'PAUSED'
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : batchState === 'COMPLETED'
-                          ? 'bg-gray-100 text-gray-700'
-                          : batchState === 'STOPPED'
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-slate-100 text-slate-700'
-                      }`}>
-                        {batchState}
-                      </span>
+              {/* Batch Control Section - Always visible if campaign has leads */}
+              {selectedCampaign && hasLeads && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    {/* Status Counts */}
+                    <div className="flex items-center gap-2 text-xs text-gray-600 flex-wrap">
                       <span>Pending {batchStatus?.pending ?? 0}</span>
                       <span className="text-gray-300">•</span>
                       <span>In Progress {batchStatus?.inProgress ?? 0}</span>
@@ -2337,56 +2324,98 @@ export default function Home() {
                       <span className="text-gray-300">•</span>
                       <span>Failed {batchStatus?.failed ?? 0}</span>
                     </div>
+                    {/* Batch Control Buttons */}
                     <div className="flex items-center gap-2">
-                      {(batchState === 'IDLE' || batchState === 'COMPLETED') && (
-                        <button
-                          onClick={startBatchCall}
-                          disabled={isStartingBatch || !hasLeads}
-                          className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {isStartingBatch ? 'Starting...' : 'Start Batch Call'}
-                        </button>
-                      )}
-                      {batchState === 'RUNNING' && (
-                        <>
-                          <button
-                            onClick={pauseBatchCall}
-                            disabled={isStoppingBatch}
-                            className="px-3 py-1.5 bg-yellow-500 text-white text-xs font-semibold rounded-md hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Pause
-                          </button>
-                          <button
-                            onClick={stopBatchCall}
-                            disabled={isStoppingBatch}
-                            className="px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Stop
-                          </button>
-                        </>
-                      )}
-                      {batchState === 'PAUSED' && (
-                        <>
-                          <button
-                            onClick={resumeBatchCall}
-                            disabled={isStoppingBatch}
-                            className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Resume
-                          </button>
-                          <button
-                            onClick={stopBatchCall}
-                            disabled={isStoppingBatch}
-                            className="px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Stop
-                          </button>
-                        </>
-                      )}
+                      {(() => {
+                        const pending = batchStatus?.pending ?? 0;
+                        const inProgress = batchStatus?.inProgress ?? 0;
+                        const completed = batchStatus?.completed ?? 0;
+                        const isPaused = batchStatus?.status === "PAUSED";
+
+                        // Button state logic based on requirements:
+                        // if (inProgress > 0): Show "Pause Batch" and "Stop Batch"
+                        // else if (pending > 0): Show "Start Batch Call"
+                        // else if (completed > 0): Show "Re-run Batch"
+                        // else: Disable button with label "No leads to call"
+                        if (inProgress > 0) {
+                          // If paused, show Resume instead of Pause
+                          if (isPaused) {
+                            return (
+                              <>
+                                <button
+                                  onClick={resumeBatchCall}
+                                  disabled={isStoppingBatch}
+                                  className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  Resume Batch
+                                </button>
+                                <button
+                                  onClick={stopBatchCall}
+                                  disabled={isStoppingBatch}
+                                  className="px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  Stop Batch
+                                </button>
+                              </>
+                            );
+                          } else {
+                            return (
+                              <>
+                                <button
+                                  onClick={pauseBatchCall}
+                                  disabled={isStoppingBatch}
+                                  className="px-3 py-1.5 bg-yellow-500 text-white text-xs font-semibold rounded-md hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  Pause Batch
+                                </button>
+                                <button
+                                  onClick={stopBatchCall}
+                                  disabled={isStoppingBatch}
+                                  className="px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  Stop Batch
+                                </button>
+                              </>
+                            );
+                          }
+                        } else if (pending > 0) {
+                          return (
+                            <button
+                              onClick={startBatchCall}
+                              disabled={isStartingBatch}
+                              className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {isStartingBatch ? 'Starting...' : 'Start Batch Call'}
+                            </button>
+                          );
+                        } else if (completed > 0) {
+                          return (
+                            <button
+                              onClick={startBatchCall}
+                              disabled={isStartingBatch}
+                              className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {isStartingBatch ? 'Starting...' : 'Re-run Batch'}
+                            </button>
+                          );
+                        } else {
+                          return (
+                            <button
+                              disabled
+                              className="px-3 py-1.5 bg-gray-300 text-gray-500 text-xs font-semibold rounded-md cursor-not-allowed transition-colors"
+                            >
+                              No leads to call
+                            </button>
+                          );
+                        }
+                      })()}
                     </div>
                   </div>
                 </div>
               )}
+
+            {/* Scrollable Content Area */}
+            <div className="flex-1 overflow-y-auto px-6 py-6">
               {selectedCampaign ? (
                 <div>
 
