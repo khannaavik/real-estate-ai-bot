@@ -3890,6 +3890,7 @@ export default function Home() {
         )}
 
       {/* Contact Us Section */}
+      {!selectedCampaign && (
       <footer className="bg-white border-t border-gray-200 mt-16">
         <div className="max-w-[1440px] mx-auto px-6 py-12">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -4005,6 +4006,7 @@ export default function Home() {
           </div>
         </div>
       </footer>
+      )}
     </div>
   );
 }
