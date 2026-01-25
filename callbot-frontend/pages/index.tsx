@@ -2266,7 +2266,7 @@ export default function Home() {
           {/* Center: Main Content - Contacts/Leads */}
           <main className="flex-1 min-w-0 bg-white flex flex-col">
               {/* Sticky Action Bar - Always visible below header */}
-              <div className="sticky top-[120px] flex-shrink-0 z-20 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 shadow-sm">
+              <div className="sticky top-[120px] flex-shrink-0 z-30 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base sm:text-lg font-semibold text-gray-900">
@@ -2281,8 +2281,8 @@ export default function Home() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Batch Controls - Sticky top-right, always visible */}
-                  {selectedCampaign && hasLeads && (() => {
+                  {/* Batch Controls - Sticky top-right, always visible when campaign is selected */}
+                  {selectedCampaign && (() => {
                     const currentState = batchStatus?.status || batchState || "IDLE";
                     const isRunning = currentState === "RUNNING";
                     const isPaused = currentState === "PAUSED";
@@ -2295,10 +2295,11 @@ export default function Home() {
                         {isIdle && (
                           <button
                             onClick={startBatchCall}
-                            disabled={isStartingBatch || isRunning}
+                            disabled={isStartingBatch || isRunning || !hasLeads}
                             className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            title={!hasLeads ? "No leads to call. Add leads first." : ""}
                           >
-                            {isStartingBatch ? 'Starting...' : 'Start Batch Call'}
+                            {isStartingBatch ? 'Starting...' : hasLeads ? 'Start Batch Call' : 'No leads to call'}
                           </button>
                         )}
                         {isRunning && (
