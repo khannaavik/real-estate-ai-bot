@@ -5,7 +5,6 @@ import { getApiBaseUrl, authenticatedFetch } from "../utils/api";
 import { useLiveEvents, type SSEEvent } from "../hooks/useLiveEvents";
 import { LeadStatusBadge, type LeadStatus } from "../components/LeadStatusBadge";
 import { LeadDrawer } from "../components/LeadDrawer";
-import { BatchControlBar } from "../components/BatchControlBar";
 import type { LeadTimelineEvent } from "../types/lead";
 import type { CampaignContact, Contact } from "@/types/campaign";
 
@@ -142,13 +141,13 @@ export default function Home() {
   const [isStartingBatch, setIsStartingBatch] = useState(false);
   const [isStoppingBatch, setIsStoppingBatch] = useState(false);
   const [batchStatus, setBatchStatus] = useState<{
-    status: "QUEUED" | "RUNNING" | "STOPPED" | "COMPLETED";
+    status?: "IDLE" | "RUNNING" | "PAUSED" | "STOPPED" | "COMPLETED";
     pending: number;
     inProgress: number;
     completed: number;
     failed: number;
+    running?: boolean;
   } | null>(null);
-  const [batchStatusError, setBatchStatusError] = useState<string | null>(null);
   const [lastImportSummary, setLastImportSummary] = useState<{ imported: number; skipped: number } | null>(null);
   const [isBatchPolling, setIsBatchPolling] = useState(false);
   const batchPollingRef = useRef<number | null>(null);
@@ -1462,36 +1461,40 @@ export default function Home() {
     return contacts.length > 0;
   }, [contacts.length, selectedCampaign]);
 
-  const isBatchRunning = batchStatus?.status === "RUNNING";
-  const isBatchActive = batchStatus?.status === "RUNNING" || batchStatus?.status === "QUEUED";
-  const showLegacyBatchControls = false;
-  const batchTotal =
-    (batchStatus?.pending ?? 0) +
-    (batchStatus?.inProgress ?? 0) +
-    (batchStatus?.completed ?? 0) +
-    (batchStatus?.failed ?? 0);
-  const batchProgressPercent = batchTotal > 0
-    ? Math.round(((batchStatus?.completed ?? 0) + (batchStatus?.failed ?? 0)) / batchTotal * 100)
-    : 0;
+  const batchState = React.useMemo(() => {
+    if (batchStatus?.status) return batchStatus.status;
+    if (batchStatus?.running) return "RUNNING";
+    if (
+      (batchStatus?.pending ?? 0) === 0 &&
+      (batchStatus?.inProgress ?? 0) === 0 &&
+      ((batchStatus?.completed ?? 0) > 0 || (batchStatus?.failed ?? 0) > 0)
+    ) {
+      return "COMPLETED";
+    }
+    return "IDLE";
+  }, [batchStatus]);
+
+  const isBatchRunning = batchState === "RUNNING";
+  const isBatchPaused = batchState === "PAUSED";
+  const isBatchActive = isBatchRunning || isBatchPaused;
 
   async function fetchBatchStatus(): Promise<void> {
     if (!selectedCampaign || mockMode) return;
     try {
       const data: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/batch-status`);
-      if (data?.status) {
+      if (data && (data.status || typeof data.running === "boolean")) {
         setBatchStatus({
           status: data.status,
           pending: data.pending ?? 0,
           inProgress: data.inProgress ?? 0,
           completed: data.completed ?? 0,
           failed: data.failed ?? 0,
+          running: data.running,
         });
-        setBatchStatusError(null);
       }
     } catch (err: any) {
       const errorMessage = err?.message || String(err);
       console.error("fetchBatchStatus error:", errorMessage);
-      setBatchStatusError(errorMessage);
     }
   }
 
@@ -1529,16 +1532,13 @@ export default function Home() {
 
   useEffect(() => {
     if (!selectedCampaign || mockMode) return;
-    if (batchStatus?.status === "RUNNING") {
+    if (batchState === "RUNNING") {
       startBatchPolling();
     } else {
       stopBatchPolling();
     }
-  }, [batchStatus?.status, selectedCampaign?.id, mockMode]);
+  }, [batchState, selectedCampaign?.id, mockMode]);
 
-  // Sticky CTA visibility and animation state
-  const showStickyCTA = selectedCampaign && hasLeads && !isBatchRunning;
-  const [stickyCTAAnimating, setStickyCTAAnimating] = useState(false);
 
   // Toggle low-interest leads visibility
   const toggleLowInterestLeads = () => {
@@ -1572,16 +1572,6 @@ export default function Home() {
     });
   }, [contacts, showLowInterestLeads]);
 
-  useEffect(() => {
-    if (showStickyCTA) {
-      // Trigger animation after mount
-      requestAnimationFrame(() => {
-        setStickyCTAAnimating(true);
-      });
-    } else {
-      setStickyCTAAnimating(false);
-    }
-  }, [showStickyCTA]);
 
   // Start batch call function
   async function startBatchCall() {
@@ -1602,7 +1592,6 @@ export default function Home() {
 
     setIsStartingBatch(true);
     setCsvUploadSuccessBanner(null); // Hide CSV success banner when starting batch
-    setBatchStatusError(null);
     try {
       if (mockMode) {
         setToast('(Mock) Batch call started');
@@ -1633,13 +1622,87 @@ export default function Home() {
     }
   }
 
+  async function pauseBatchCall() {
+    if (!selectedCampaign) {
+      setToast('Please select a campaign first');
+      return;
+    }
+
+    setIsStoppingBatch(true);
+    try {
+      if (mockMode) {
+        setBatchStatus((prev) =>
+          prev
+            ? { ...prev, status: "PAUSED", running: false }
+            : { status: "PAUSED", pending: 0, inProgress: 0, completed: 0, failed: 0, running: false }
+        );
+        setToast('(Mock) Batch paused');
+        return;
+      }
+
+      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/pause`, {
+        method: 'POST',
+      });
+
+      if (res?.success) {
+        setToast('Batch paused');
+        fetchBatchStatus();
+      } else {
+        setToast('Failed to pause batch call');
+      }
+    } catch (err: any) {
+      const errorMessage = err?.message || String(err);
+      console.error('pauseBatchCall error:', errorMessage);
+      setToast(errorMessage.includes('HTTP') ? errorMessage : 'Failed to pause batch call.');
+    } finally {
+      setIsStoppingBatch(false);
+    }
+  }
+
+  async function resumeBatchCall() {
+    if (!selectedCampaign) {
+      setToast('Please select a campaign first');
+      return;
+    }
+
+    setIsStoppingBatch(true);
+    try {
+      if (mockMode) {
+        setBatchStatus((prev) =>
+          prev
+            ? { ...prev, status: "RUNNING", running: true }
+            : { status: "RUNNING", pending: 0, inProgress: 0, completed: 0, failed: 0, running: true }
+        );
+        setToast('(Mock) Batch resumed');
+        return;
+      }
+
+      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/resume`, {
+        method: 'POST',
+      });
+
+      if (res?.success) {
+        setToast('Batch resumed');
+        fetchBatchStatus();
+      } else {
+        setToast('Failed to resume batch call');
+      }
+    } catch (err: any) {
+      const errorMessage = err?.message || String(err);
+      console.error('resumeBatchCall error:', errorMessage);
+      setToast(errorMessage.includes('HTTP') ? errorMessage : 'Failed to resume batch call.');
+    } finally {
+      setIsStoppingBatch(false);
+    }
+  }
+
   async function stopBatchCall() {
     if (!selectedCampaign) {
       setToast('Please select a campaign first');
       return;
     }
 
-    if (!isBatchRunning) {
+    if (!isBatchActive) {
       setToast('No batch is currently running.');
       return;
     }
@@ -1647,12 +1710,12 @@ export default function Home() {
     setIsStoppingBatch(true);
     try {
       if (mockMode) {
-        setBatchStatus({ status: "STOPPED", pending: 0, inProgress: 0, completed: 0, failed: 0 });
+        setBatchStatus({ status: "STOPPED", pending: 0, inProgress: 0, completed: 0, failed: 0, running: false });
         setToast('(Mock) Batch stopped');
         return;
       }
 
-      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/stop-batch`, {
+      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/stop`, {
         method: 'POST',
       });
 
@@ -1814,9 +1877,9 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="h-screen overflow-hidden bg-slate-50 flex flex-col">
       {/* Sticky Header */}
-      <header className="sticky top-0 z-40 bg-white border-b border-gray-200 shadow-sm">
+      <header className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-200 shadow-sm overflow-hidden">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1987,7 +2050,7 @@ export default function Home() {
       )}
 
       {/* STEP 21: Full-width responsive layout */}
-      <div className="w-full flex relative">
+      <div className="w-full flex relative flex-1 pt-[120px] overflow-hidden">
           {/* Tablet & Mobile: Campaign Drawer (Slide-in) */}
           {campaignDrawerShouldRender && (
             <>
@@ -2007,7 +2070,7 @@ export default function Home() {
               {/* Drawer - Tablet & Mobile: Slide-in from left */}
               <aside 
                 ref={drawerRef}
-                className={`fixed left-0 top-0 h-full w-72 max-w-[85vw] bg-white z-50 shadow-xl overflow-y-auto ${
+                className={`fixed left-0 top-0 h-full w-72 max-w-[85vw] bg-white z-50 shadow-xl overflow-hidden ${
                   campaignDrawerAnimating ? 'translate-x-0' : '-translate-x-full'
                 }`}
                 style={{
@@ -2113,7 +2176,7 @@ export default function Home() {
           )}
 
           {/* Desktop: Campaigns Sidebar (Fixed, always visible on >=1024px) */}
-          <aside className="hidden lg:block w-[280px] flex-shrink-0 sticky top-[120px] h-[calc(100vh-120px)] overflow-y-auto border-r border-gray-200 bg-white">
+          <aside className="hidden lg:block w-[280px] flex-shrink-0 h-full overflow-hidden border-r border-gray-200 bg-white">
             <div className="p-4">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Campaigns</h2>
@@ -2195,11 +2258,9 @@ export default function Home() {
           </aside>
 
           {/* Center: Main Content - Contacts/Leads */}
-          <main className="flex-1 min-w-0 bg-white">
-            {/* Scrollable Content Container */}
-            <div className="h-[calc(100vh-120px)] overflow-y-auto">
+          <main className="flex-1 min-w-0 bg-white overflow-hidden flex flex-col">
               {/* Sticky Action Bar */}
-              <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 shadow-sm">
+              <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 shadow-sm overflow-hidden">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base sm:text-lg font-semibold text-gray-900">
@@ -2244,136 +2305,88 @@ export default function Home() {
                         <span className="hidden sm:inline">+ Add Lead</span>
                         <span className="sm:hidden">+</span>
                       </button>
-                      {/* Start Batch Call Button */}
-                      {selectedCampaign && hasLeads && !isBatchRunning && (
-                        <button
-                          onClick={startBatchCall}
-                          disabled={isStartingBatch || isBatchActive}
-                          className="px-2 sm:px-3 py-1.5 bg-emerald-600 text-white text-xs sm:text-sm font-semibold rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative group"
-                          title="Start batch calling"
-                        >
-                          {isStartingBatch ? (
-                            <>
-                              <svg className="inline-block animate-spin h-3 w-3 sm:h-4 sm:w-4 mr-1" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                              </svg>
-                              <span className="hidden sm:inline">Starting...</span>
-                              <span className="sm:hidden">...</span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="hidden sm:inline">▶ Start Batch Call</span>
-                              <span className="sm:hidden">▶</span>
-                            </>
-                          )}
-                        </button>
-                      )}
-                      {selectedCampaign && isBatchRunning && (
-                        <button
-                          onClick={stopBatchCall}
-                          disabled={isStoppingBatch}
-                          className="px-2 sm:px-3 py-1.5 bg-red-600 text-white text-xs sm:text-sm font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          title="Stop batch calling"
-                        >
-                          {isStoppingBatch ? (
-                            <>
-                              <span className="hidden sm:inline">Stopping...</span>
-                              <span className="sm:hidden">...</span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="hidden sm:inline">⏹ Stop Batch Call</span>
-                              <span className="sm:hidden">⏹</span>
-                            </>
-                          )}
-                        </button>
-                      )}
                     </>
                   )}
                 </div>
               </div>
-            </div>
-
-            {selectedCampaign && (
-              <div className="border-b border-gray-200 bg-white px-4 sm:px-6 py-3">
-                <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-gray-600">
-                  <div>
-                    Imported: {lastImportSummary ? lastImportSummary.imported : 0}
-                    {lastImportSummary ? ` • Skipped ${lastImportSummary.skipped}` : ''}
-                  </div>
-                  <div>
-                    Pending {batchStatus?.pending ?? 0} • In Progress {batchStatus?.inProgress ?? 0} • Completed {batchStatus?.completed ?? 0} • Failed {batchStatus?.failed ?? 0}
-                  </div>
-                  <div className="text-gray-500">
-                    Status: {batchStatus?.status ?? 'STOPPED'}
-                    {isBatchPolling ? ' • Live' : ''}
-                  </div>
-                </div>
-                <div className="mt-2 h-2 w-full rounded bg-gray-200 overflow-hidden">
-                  <div
-                    className="h-2 bg-emerald-500 rounded"
-                    style={{ width: `${batchProgressPercent}%` }}
-                  />
-                </div>
-                {batchStatusError && (
-                  <div className="mt-2 flex items-center justify-between gap-3 text-xs text-red-600">
-                    <span className="truncate">{batchStatusError}</span>
-                    <button
-                      onClick={() => setBatchStatusError(null)}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Batch Activity Log Panel - Keep this for detailed logs */}
-
-            {/* Batch Activity Log Panel - Moved to sticky action bar area */}
-            {batchJob && batchLogs.length > 0 && (
-              <div className="sticky top-[200px] z-10 bg-white border-b border-gray-200 px-4 sm:px-6 py-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Batch Activity</h3>
-                </div>
-                <div className="max-h-[120px] overflow-y-auto">
-                  {batchLogs.slice(0, 5).map((log, idx) => {
-                    // Determine dot color based on log content
-                    const logLower = log.toLowerCase();
-                    let dotColor = 'bg-gray-400'; // default
-                    if (logLower.includes('started')) {
-                      dotColor = 'bg-blue-500';
-                    } else if (logLower.includes('completed')) {
-                      dotColor = 'bg-green-500';
-                    } else if (logLower.includes('paused')) {
-                      dotColor = 'bg-yellow-500';
-                    } else if (logLower.includes('failed') || logLower.includes('cancelled')) {
-                      dotColor = 'bg-red-500';
-                    }
-                    
-                    return (
-                      <div
-                        key={idx}
-                        className="px-2 py-1.5 flex items-start gap-2 text-xs"
-                      >
-                        <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${dotColor}`}></div>
-                        <div className="text-xs text-gray-600 flex-1">{log}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
             {/* Scrollable Content Area */}
-            <div className={`overflow-y-auto h-[calc(100vh-240px)] px-6 py-4 ${
-              // Add bottom padding on desktop when sticky CTA is visible
-              selectedCampaign && hasLeads && !isBatchRunning
-                ? 'lg:pb-24'
-                : ''
-            }`}>
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              {selectedCampaign && (
+                <div className="sticky top-0 z-30 bg-white border-b border-gray-200 -mx-6 px-6 py-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs text-gray-600">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        batchState === 'RUNNING'
+                          ? 'bg-green-100 text-green-700'
+                          : batchState === 'PAUSED'
+                          ? 'bg-yellow-100 text-yellow-700'
+                          : batchState === 'COMPLETED'
+                          ? 'bg-gray-100 text-gray-700'
+                          : batchState === 'STOPPED'
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}>
+                        {batchState}
+                      </span>
+                      <span>Pending {batchStatus?.pending ?? 0}</span>
+                      <span className="text-gray-300">•</span>
+                      <span>In Progress {batchStatus?.inProgress ?? 0}</span>
+                      <span className="text-gray-300">•</span>
+                      <span>Completed {batchStatus?.completed ?? 0}</span>
+                      <span className="text-gray-300">•</span>
+                      <span>Failed {batchStatus?.failed ?? 0}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {(batchState === 'IDLE' || batchState === 'COMPLETED') && (
+                        <button
+                          onClick={startBatchCall}
+                          disabled={isStartingBatch || !hasLeads}
+                          className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isStartingBatch ? 'Starting...' : 'Start Batch Call'}
+                        </button>
+                      )}
+                      {batchState === 'RUNNING' && (
+                        <>
+                          <button
+                            onClick={pauseBatchCall}
+                            disabled={isStoppingBatch}
+                            className="px-3 py-1.5 bg-yellow-500 text-white text-xs font-semibold rounded-md hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Pause
+                          </button>
+                          <button
+                            onClick={stopBatchCall}
+                            disabled={isStoppingBatch}
+                            className="px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Stop
+                          </button>
+                        </>
+                      )}
+                      {batchState === 'PAUSED' && (
+                        <>
+                          <button
+                            onClick={resumeBatchCall}
+                            disabled={isStoppingBatch}
+                            className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Resume
+                          </button>
+                          <button
+                            onClick={stopBatchCall}
+                            disabled={isStoppingBatch}
+                            className="px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Stop
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               {selectedCampaign ? (
                 <div>
 
@@ -2395,13 +2408,6 @@ export default function Home() {
                           >
                             ➕ Add Lead
                           </button>
-                          <button
-                            disabled={isUploadingCsv}
-                            className="px-4 py-2 bg-gray-100 text-gray-500 text-sm font-medium rounded-md cursor-not-allowed"
-                            title={isUploadingCsv ? "Please wait for CSV upload to complete" : "Add at least one lead to start batch calling"}
-                          >
-                            ▶️ Start Batch
-                          </button>
                         </div>
                       </div>
                     </div>
@@ -2420,26 +2426,6 @@ export default function Home() {
                           {lastImportSummary ? ` • ${lastImportSummary.imported} imported, ${lastImportSummary.skipped} skipped` : ''}
                         </p>
                       </div>
-                      <button
-                        onClick={startBatchCall}
-                        disabled={isStartingBatch || isBatchActive}
-                        className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-                      >
-                        {isStartingBatch ? (
-                          <>
-                            <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            Starting...
-                          </>
-                        ) : (
-                          <>
-                            <span>▶</span>
-                            Start Batch Call
-                          </>
-                        )}
-                      </button>
                     </div>
                   </div>
                 )}
@@ -2700,176 +2686,6 @@ export default function Home() {
           </main>
         </div>
 
-      {/* Sticky "Start Batch Call" CTA */}
-      {showStickyCTA && (
-        <>
-          {/* Mobile: Full-width sticky bar */}
-          <div 
-            className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-40"
-            style={{ 
-              paddingBottom: 'env(safe-area-inset-bottom, 0)',
-              height: '56px',
-              transition: prefersReducedMotion 
-                ? 'none' 
-                : 'transform 180ms ease-out, opacity 180ms ease-out',
-              transform: stickyCTAAnimating ? 'translateY(0)' : 'translateY(16px)',
-              opacity: stickyCTAAnimating ? 1 : 0
-            }}
-          >
-            <div className="h-full px-4 flex items-center">
-              <button
-                onClick={startBatchCall}
-                disabled={isStartingBatch || isBatchActive}
-                className="w-full h-full bg-emerald-600 text-white text-base font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
-                style={{
-                  transition: prefersReducedMotion ? 'none' : 'all 120ms ease-out'
-                }}
-                aria-label="Start Batch Call"
-              >
-                {isStartingBatch ? (
-                  <>
-                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    <span>Starting...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>▶️</span>
-                    <span>Start Batch Call</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Desktop: Sticky bottom-right CTA */}
-          <div
-            className="hidden lg:block fixed bottom-6 right-6 z-40"
-            style={{
-              transition: prefersReducedMotion 
-                ? 'none' 
-                : 'transform 180ms ease-out, opacity 180ms ease-out',
-              transform: stickyCTAAnimating ? 'translateY(0)' : 'translateY(16px)',
-              opacity: stickyCTAAnimating ? 1 : 0
-            }}
-          >
-            <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-4 min-w-[280px]">
-              <button
-                onClick={startBatchCall}
-                disabled={isStartingBatch || isBatchActive}
-                className="w-full px-6 py-3 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 active:scale-[0.97]"
-                style={{
-                  transition: prefersReducedMotion ? 'none' : 'all 120ms ease-out'
-                }}
-                aria-label="Start Batch Call"
-              >
-                {isStartingBatch ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    <span>Starting...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>▶️</span>
-                    <span>Start Batch Call</span>
-                  </>
-                )}
-              </button>
-              <p className="text-xs text-gray-500 text-center mt-2">
-                AI will call eligible leads one by one
-              </p>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Batch Control Bar - Fixed at bottom with fade-up animation */}
-      <div
-        className="fixed bottom-0 left-0 right-0 z-50"
-        style={{
-          opacity: showLegacyBatchControls ? 1 : 0,
-          transform: showLegacyBatchControls ? 'translateY(0)' : 'translateY(100%)',
-          transition: prefersReducedMotion 
-            ? 'none' 
-            : 'opacity 200ms ease-out, transform 200ms ease-out',
-          pointerEvents: showLegacyBatchControls ? 'auto' : 'none'
-        }}
-      >
-        {showLegacyBatchControls && (
-        <BatchControlBar
-          batchJob={batchJob}
-          isLoading={batchActionLoading}
-          onPause={async () => {
-            if (!batchJob?.batchJobId || batchActionLoading) return;
-            setBatchActionLoading(true);
-            try {
-              if (mockMode) {
-                setToast('(Mock) Batch paused');
-                return;
-              }
-              const res = await apiFetch(`${API_BASE}/batch/pause/${batchJob.batchJobId}`, {
-                method: 'POST',
-              });
-              if ((res as any).ok) {
-                setToast('Batch paused');
-              }
-            } catch (err: any) {
-              setToast(`Failed to pause batch: ${err?.message || err}`);
-            } finally {
-              setBatchActionLoading(false);
-            }
-          }}
-          onResume={async () => {
-            if (!batchJob?.batchJobId || batchActionLoading) return;
-            setBatchActionLoading(true);
-            try {
-              if (mockMode) {
-                setToast('(Mock) Batch resumed');
-                return;
-              }
-              const res = await apiFetch(`${API_BASE}/batch/resume/${batchJob.batchJobId}`, {
-                method: 'POST',
-              });
-              if ((res as any).ok) {
-                setToast('Batch resumed');
-              }
-            } catch (err: any) {
-              setToast(`Failed to resume batch: ${err?.message || err}`);
-            } finally {
-              setBatchActionLoading(false);
-            }
-          }}
-          onStop={async () => {
-            if (!batchJob?.batchJobId || batchActionLoading) return;
-            setBatchActionLoading(true);
-            try {
-              if (mockMode) {
-                setToast('(Mock) Batch stopped');
-                return;
-              }
-              const res = await apiFetch(`${API_BASE}/batch/stop/${batchJob.batchJobId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cancelledBy: 'User' }),
-              });
-              if ((res as any).ok) {
-                setToast('Batch stopped');
-              }
-            } catch (err: any) {
-              setToast(`Failed to stop batch: ${err?.message || err}`);
-            } finally {
-              setBatchActionLoading(false);
-            }
-        }}
-          mockMode={mockMode}
-        />
-        )}
-      </div>
 
       {toast && <div className="fixed right-6 bottom-6 bg-black text-white px-4 py-2 rounded shadow z-50">{toast}</div>}
 

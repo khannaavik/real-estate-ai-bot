@@ -1,6 +1,15 @@
-﻿@import "tailwindcss";
+@import "tailwindcss";
 
 /* Add custom styles below */
+html,
+body,
+#__next {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
 @keyframes slideInRight {
   from {
     transform: translateX(1rem);
