@@ -1879,7 +1879,7 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 flex flex-col">
       {/* Sticky Header */}
       <header className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-200 shadow-sm overflow-hidden">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4">
@@ -2052,7 +2052,7 @@ export default function Home() {
       )}
 
       {/* STEP 21: Full-width responsive layout */}
-      <div className="w-full flex relative flex-1 pt-[120px] overflow-hidden h-[calc(100vh-120px)]">
+      <div className="w-full flex relative flex-1 pt-[120px]">
           {/* Tablet & Mobile: Campaign Drawer (Slide-in) */}
           {campaignDrawerShouldRender && (
             <>
@@ -2180,8 +2180,8 @@ export default function Home() {
           )}
 
           {/* Desktop: Campaigns Sidebar (Fixed, always visible on >=1024px) */}
-          <aside className="hidden lg:block w-[280px] flex-shrink-0 h-full overflow-hidden border-r border-gray-200 bg-white flex flex-col">
-            <div className="flex-shrink-0 p-4">
+          <aside className="hidden lg:block w-[280px] flex-shrink-0 border-r border-gray-200 bg-white">
+            <div className="p-4">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Campaigns</h2>
                 <button
@@ -2193,7 +2193,7 @@ export default function Home() {
                 </button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 px-4 pb-4">
+            <div className="px-4 pb-4">
               {loading && <div className="text-sm text-gray-500 py-4">Loading...</div>}
               <div className="space-y-2">
                 {campaigns.length === 0 && (
@@ -2264,9 +2264,9 @@ export default function Home() {
           </aside>
 
           {/* Center: Main Content - Contacts/Leads */}
-          <main className="flex-1 min-w-0 bg-white overflow-hidden flex flex-col h-full">
-              {/* Sticky Action Bar - Always visible at top */}
-              <div className="sticky top-0 flex-shrink-0 z-20 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 shadow-sm overflow-hidden">
+          <main className="flex-1 min-w-0 bg-white flex flex-col">
+              {/* Sticky Action Bar - Always visible below header */}
+              <div className="sticky top-[120px] flex-shrink-0 z-20 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base sm:text-lg font-semibold text-gray-900">
@@ -2375,8 +2375,8 @@ export default function Home() {
               </div>
               </div>
 
-            {/* Scrollable Content Area - Only this area scrolls */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 min-h-0">
+            {/* Content Area - Page-level scrolling */}
+            <div className="px-6 py-6">
               {selectedCampaign ? (
                 <div>
 
