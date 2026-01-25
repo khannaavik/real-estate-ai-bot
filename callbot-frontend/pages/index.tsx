@@ -1580,8 +1580,10 @@ export default function Home() {
       return;
     }
 
-    if (isBatchActive) {
-      setToast('A batch is already active. Please wait for it to stop.');
+    // Check if batch is already running (prevent duplicate starts)
+    // Button will be disabled in UI, so just return silently
+    const currentState = batchStatus?.status || batchState || "IDLE";
+    if (currentState === "RUNNING" || currentState === "PAUSED") {
       return;
     }
 
@@ -2263,8 +2265,8 @@ export default function Home() {
 
           {/* Center: Main Content - Contacts/Leads */}
           <main className="flex-1 min-w-0 bg-white overflow-hidden flex flex-col h-full">
-              {/* Sticky Action Bar */}
-              <div className="flex-shrink-0 z-20 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 shadow-sm overflow-hidden">
+              {/* Sticky Action Bar - Always visible at top */}
+              <div className="sticky top-0 flex-shrink-0 z-20 bg-white border-b border-gray-200 px-4 sm:px-6 py-4 shadow-sm overflow-hidden">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base sm:text-lg font-semibold text-gray-900">
@@ -2278,145 +2280,100 @@ export default function Home() {
                     </>
                   )}
                 </div>
-                <div className="hidden md:flex gap-2 flex-wrap">
-                  <button
-                    onClick={() => {
-                      if (typeof window !== 'undefined') {
-                        window.location.href = `/analytics`;
-                      }
-                    }}
-                    className="px-2 sm:px-3 py-1.5 bg-purple-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-purple-700 transition-colors"
-                    title="View analytics overview"
-                  >
-                    <span className="hidden sm:inline">📊 Analytics</span>
-                    <span className="sm:hidden">📊</span>
-                  </button>
-                  {selectedCampaign && (
-                    <>
-                      <button
-                        onClick={() => setShowCsvUploadModal(true)}
-                        className="px-2 sm:px-3 py-1.5 bg-green-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        disabled={isUploadingCsv}
-                      >
-                        <span className="hidden sm:inline">📄 Upload CSV</span>
-                        <span className="sm:hidden">📄</span>
-                      </button>
-                      <button
-                        onClick={() => setShowAddLeadModal(true)}
-                        className="px-2 sm:px-3 py-1.5 bg-blue-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        disabled={isUploadingCsv}
-                      >
-                        <span className="hidden sm:inline">+ Add Lead</span>
-                        <span className="sm:hidden">+</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
+                <div className="flex items-center gap-2">
+                  {/* Batch Controls - Sticky top-right, always visible */}
+                  {selectedCampaign && hasLeads && (() => {
+                    const currentState = batchStatus?.status || batchState || "IDLE";
+                    const isRunning = currentState === "RUNNING";
+                    const isPaused = currentState === "PAUSED";
+                    const isCompleted = currentState === "COMPLETED";
+                    const isIdle = currentState === "IDLE" || !currentState;
 
-              {/* Batch Control Section - Always visible if campaign has leads */}
-              {selectedCampaign && hasLeads && (
-                <div className="flex-shrink-0 mt-4 pt-4 border-t border-gray-200">
-                  <div className="flex items-center justify-between flex-wrap gap-3">
-                    {/* Status Counts */}
-                    <div className="flex items-center gap-2 text-xs text-gray-600 flex-wrap">
-                      <span>Pending {batchStatus?.pending ?? 0}</span>
-                      <span className="text-gray-300">•</span>
-                      <span>In Progress {batchStatus?.inProgress ?? 0}</span>
-                      <span className="text-gray-300">•</span>
-                      <span>Completed {batchStatus?.completed ?? 0}</span>
-                      <span className="text-gray-300">•</span>
-                      <span>Failed {batchStatus?.failed ?? 0}</span>
-                    </div>
-                    {/* Batch Control Buttons */}
-                    <div className="flex items-center gap-2">
-                      {(() => {
-                        const pending = batchStatus?.pending ?? 0;
-                        const inProgress = batchStatus?.inProgress ?? 0;
-                        const completed = batchStatus?.completed ?? 0;
-                        const isPaused = batchStatus?.status === "PAUSED";
-
-                        // Button state logic based on requirements:
-                        // if (inProgress > 0): Show "Pause Batch" and "Stop Batch"
-                        // else if (pending > 0): Show "Start Batch Call"
-                        // else if (completed > 0): Show "Re-run Batch"
-                        // else: Disable button with label "No leads to call"
-                        if (inProgress > 0) {
-                          // If paused, show Resume instead of Pause
-                          if (isPaused) {
-                            return (
-                              <>
-                                <button
-                                  onClick={resumeBatchCall}
-                                  disabled={isStoppingBatch}
-                                  className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                                >
-                                  Resume Batch
-                                </button>
-                                <button
-                                  onClick={stopBatchCall}
-                                  disabled={isStoppingBatch}
-                                  className="px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                                >
-                                  Stop Batch
-                                </button>
-                              </>
-                            );
-                          } else {
-                            return (
-                              <>
-                                <button
-                                  onClick={pauseBatchCall}
-                                  disabled={isStoppingBatch}
-                                  className="px-3 py-1.5 bg-yellow-500 text-white text-xs font-semibold rounded-md hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                                >
-                                  Pause Batch
-                                </button>
-                                <button
-                                  onClick={stopBatchCall}
-                                  disabled={isStoppingBatch}
-                                  className="px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                                >
-                                  Stop Batch
-                                </button>
-                              </>
-                            );
-                          }
-                        } else if (pending > 0) {
-                          return (
-                            <button
-                              onClick={startBatchCall}
-                              disabled={isStartingBatch}
-                              className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                              {isStartingBatch ? 'Starting...' : 'Start Batch Call'}
-                            </button>
-                          );
-                        } else if (completed > 0) {
-                          return (
-                            <button
-                              onClick={startBatchCall}
-                              disabled={isStartingBatch}
-                              className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                              {isStartingBatch ? 'Starting...' : 'Re-run Batch'}
-                            </button>
-                          );
-                        } else {
-                          return (
-                            <button
-                              disabled
-                              className="px-3 py-1.5 bg-gray-300 text-gray-500 text-xs font-semibold rounded-md cursor-not-allowed transition-colors"
-                            >
-                              No leads to call
-                            </button>
-                          );
+                    return (
+                      <div className="flex items-center gap-2">
+                        {/* State-aware batch button */}
+                        {isIdle && (
+                          <button
+                            onClick={startBatchCall}
+                            disabled={isStartingBatch || isRunning}
+                            className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {isStartingBatch ? 'Starting...' : 'Start Batch Call'}
+                          </button>
+                        )}
+                        {isRunning && (
+                          <button
+                            onClick={pauseBatchCall}
+                            disabled={isStoppingBatch}
+                            className="px-3 py-1.5 bg-orange-500 text-white text-xs font-semibold rounded-md hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            Pause Batch
+                          </button>
+                        )}
+                        {isPaused && (
+                          <button
+                            onClick={resumeBatchCall}
+                            disabled={isStoppingBatch}
+                            className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            Resume Batch
+                          </button>
+                        )}
+                        {isCompleted && (
+                          <button
+                            disabled
+                            className="px-3 py-1.5 bg-gray-400 text-white text-xs font-semibold rounded-md cursor-not-allowed transition-colors"
+                          >
+                            Batch Completed
+                          </button>
+                        )}
+                        {/* Status indicator for active batches */}
+                        {(isRunning || isPaused) && (
+                          <span className="text-xs text-gray-500">
+                            {batchStatus?.pending ?? 0} pending • {batchStatus?.inProgress ?? 0} in progress
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  
+                  <div className="hidden md:flex gap-2 flex-wrap">
+                    <button
+                      onClick={() => {
+                        if (typeof window !== 'undefined') {
+                          window.location.href = `/analytics`;
                         }
-                      })()}
-                    </div>
+                      }}
+                      className="px-2 sm:px-3 py-1.5 bg-purple-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-purple-700 transition-colors"
+                      title="View analytics overview"
+                    >
+                      <span className="hidden sm:inline">📊 Analytics</span>
+                      <span className="sm:hidden">📊</span>
+                    </button>
+                    {selectedCampaign && (
+                      <>
+                        <button
+                          onClick={() => setShowCsvUploadModal(true)}
+                          className="px-2 sm:px-3 py-1.5 bg-green-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          disabled={isUploadingCsv}
+                        >
+                          <span className="hidden sm:inline">📄 Upload CSV</span>
+                          <span className="sm:hidden">📄</span>
+                        </button>
+                        <button
+                          onClick={() => setShowAddLeadModal(true)}
+                          className="px-2 sm:px-3 py-1.5 bg-blue-600 text-white text-xs sm:text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          disabled={isUploadingCsv}
+                        >
+                          <span className="hidden sm:inline">+ Add Lead</span>
+                          <span className="sm:hidden">+</span>
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
-              )}
+              </div>
+              </div>
 
             {/* Scrollable Content Area - Only this area scrolls */}
             <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 min-h-0">
@@ -2497,11 +2454,6 @@ export default function Home() {
                 {sortedAndFilteredContacts.length > 0 && (
                   <div className="space-y-2 px-2 sm:px-0">
                       {sortedAndFilteredContacts.map((cc) => {
-                        // Determine left border color based on status
-                        const borderColorClass = 
-                          cc.status === 'HOT' ? 'border-l-4 border-red-500' :
-                          cc.status === 'WARM' ? 'border-l-4 border-amber-500' :
-                          'border-l-0';
                       const callSession = callSessions[cc.id];
                       const callStatus = callSession?.status;
                       const callInterest = callSession?.interest;
@@ -2518,9 +2470,9 @@ export default function Home() {
                         return (
                         <div
                           key={cc.id}
-                          className={`group bg-white rounded-lg border border-gray-200 ${borderColorClass} ${
+                          className={`group bg-white rounded-lg border border-gray-200 ${
                             // Mobile: stacked, Tablet/Desktop: horizontal flex
-                            'md:flex md:items-center md:justify-between md:p-5 lg:p-6 md:min-h-[100px] md:cursor-pointer'
+                            'md:flex md:items-center md:justify-between md:p-4 lg:p-5 md:cursor-pointer'
                           } ${
                             // Desktop hover effects (disabled on mobile/touch devices)
                             'md:hover:border-gray-300 md:hover:shadow-md md:hover:-translate-y-0.5'
@@ -2642,8 +2594,8 @@ export default function Home() {
                             </div>
 
                             {/* Right Section: Status Badge + Action Buttons - Right-aligned on desktop */}
-                            <div className="flex flex-col items-end gap-3 flex-shrink-0 xl:flex-row xl:items-center" onClick={(e) => e.stopPropagation()}>
-                              {/* Status Badge - Before buttons on desktop (≥1280px) */}
+                            <div className="flex flex-col items-end gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                              {/* Status Badge - Badge-only indicator */}
                               <div className="flex items-center gap-2">
                                 <LeadStatusBadge status={cc.status} />
                                 <span className="hidden xl:inline">
@@ -2678,7 +2630,7 @@ export default function Home() {
                                 </span>
                               </div>
 
-                              {/* Action Buttons - Inline with spacing, right-aligned */}
+                              {/* Action Buttons - Right-aligned */}
                               <div className="flex items-center gap-2 lg:gap-3">
                                 <button
                                   className="px-3 lg:px-4 py-1.5 lg:py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 active:scale-[0.97] transition-all"
