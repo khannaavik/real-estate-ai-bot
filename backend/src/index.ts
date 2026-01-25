@@ -33,6 +33,7 @@ import { processLiveTranscriptChunk, endLiveMonitoring, getLiveCallState, isCall
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./services/aiCallAnalysis";
 import { startDryRunBatch } from "./services/dryRunBatchCaller";
 import { startDryRunCallWorker } from "./services/dryRunCallWorker";
+import { startLiveCallWorker } from "./services/liveCallWorker";
 import { enqueueCsvJob } from "./services/csvImportWorker";
 
 
@@ -2719,11 +2720,8 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
 
     // Use CALL_MODE to determine which worker to use
     if (CALL_MODE === "LIVE") {
-      // TODO: Implement live call worker
-      // For now, fall back to dry run if LIVE mode not fully implemented
-      console.log(`[BATCH] LIVE mode requested but not yet implemented, using DRY mode`);
-      void startDryRunCallWorker(campaignId);
-      return res.json({ started: true, mode: "DRY_RUN", batchId: campaignId });
+      void startLiveCallWorker(campaignId);
+      return res.json({ started: true, mode: "LIVE", batchId: campaignId });
     } else {
       // DRY_RUN mode
       if (DRY_RUN_CALLS) {
@@ -2901,9 +2899,7 @@ apiRoutes.post("/campaigns/:campaignId/resume-batch", async (req: Request, res: 
     console.log(`[BATCH RESUME] Campaign ${campaignId} - State: PAUSED -> RUNNING`);
 
     if (CALL_MODE === "LIVE") {
-      // TODO: Implement live call worker
-      console.log(`[BATCH] LIVE mode requested but not yet implemented, using DRY mode`);
-      void startDryRunCallWorker(campaignId);
+      void startLiveCallWorker(campaignId);
     } else {
       void startDryRunCallWorker(campaignId);
     }
@@ -2988,9 +2984,7 @@ apiRoutes.post("/campaigns/:id/batch/resume", async (req: Request, res: Response
 
     // Start the batch worker
     if (CALL_MODE === "LIVE") {
-      // TODO: Implement live call worker
-      console.log(`[BATCH] LIVE mode requested but not yet implemented, using DRY mode`);
-      void startDryRunCallWorker(id);
+      void startLiveCallWorker(id);
     } else {
       void startDryRunCallWorker(id);
     }
@@ -3103,9 +3097,7 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
     console.log(`[BATCH RESUME] Campaign ${campaignId} - State: PAUSED -> RUNNING`);
 
     if (CALL_MODE === "LIVE") {
-      // TODO: Implement live call worker
-      console.log(`[BATCH] LIVE mode requested but not yet implemented, using DRY mode`);
-      void startDryRunCallWorker(campaignId);
+      void startLiveCallWorker(campaignId);
     } else {
       void startDryRunCallWorker(campaignId);
     }
