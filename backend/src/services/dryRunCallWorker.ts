@@ -133,8 +133,7 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
         where: { id: campaignId },
         data: { batchActive: false, batchState: BatchState.COMPLETED },
       });
-      console.log(`[BATCH COMPLETE] Campaign ${campaignId}`);
-      console.log(`[DRY-RUN] Batch completed ${campaignId}`);
+      console.log(`[BATCH COMPLETE] Campaign ${campaignId} - State: RUNNING -> COMPLETED`);
       return;
     }
 
@@ -207,25 +206,26 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           continue;
         }
 
-        // Call Window Guard: Check BEFORE starting EACH call (10:00-19:00 IST)
+        // Call Window Guard: Hard stop - Check BEFORE starting EACH call
         if (!isWithinCallWindow()) {
-          console.log("[CALL WINDOW] Outside allowed hours — auto-pausing batch");
+          console.log("[CALL WINDOW] Paused — outside calling hours");
           // Reset the lead back to PENDING since we didn't actually call
           await prisma.campaignContact.update({
             where: { id: contact.id },
             data: { callStatus: "PENDING" },
           });
-          // Auto-pause the batch
+          // Auto-pause the batch and persist state
           await prisma.campaign.update({
             where: { id: campaignId },
             data: { batchState: BatchState.PAUSED, batchActive: true },
           });
-          console.log(`[BATCH PAUSED] Campaign ${campaignId} - Call window restriction`);
-          break;
+          console.log(`[BATCH PAUSE] Campaign ${campaignId} - State: RUNNING -> PAUSED`);
+          console.log(`[BATCH PAUSE] Campaign ${campaignId} - Reason: Outside call window`);
+          break; // Hard stop - do NOT continue calls
         }
 
-        console.log(`[CALL START] Lead ${contact.id}`);
-        console.log(`[DRY-RUN] Calling ${contact.contact?.phone || contact.id}`);
+        const phoneNumber = contact.contact?.phone || "unknown";
+        console.log(`[CALL START] Lead ${contact.id} - Phone: ${phoneNumber}`);
 
         await sleep(randomBetweenMs(5, 15));
 
@@ -309,8 +309,7 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
           },
         });
 
-        console.log(`[CALL END] Lead ${contact.id}`);
-        console.log(`[DRY-RUN] Result: ${result}`);
+        console.log(`[CALL END] Lead ${contact.id} - Phone: ${phoneNumber} - Result: ${result}`);
 
         // Rate limiting: Add delay after each call ends (before next call starts)
         if (CALL_DELAY_MS > 0) {
@@ -353,8 +352,7 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
         where: { id: campaignId },
         data: { batchActive: false, batchState: BatchState.COMPLETED },
       });
-      console.log(`[BATCH COMPLETE] Campaign ${campaignId}`);
-      console.log(`[BATCH] Completed campaign ${campaignId}`);
+      console.log(`[BATCH COMPLETE] Campaign ${campaignId} - State: RUNNING -> COMPLETED`);
     }
   } catch (err) {
     console.error(`[DRY-RUN] Batch failed ${campaignId}`, err);

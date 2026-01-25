@@ -6,6 +6,7 @@ body,
 #__next {
   margin: 0;
   padding: 0;
+  height: 100%;
 }
 
 html {
@@ -16,10 +17,11 @@ body {
   overflow-y: auto;
   margin: 0;
   padding: 0;
+  height: 100%;
 }
 
 #__next {
-  min-height: 100vh;
+  min-height: 100%;
 }
 @keyframes slideInRight {
   from {

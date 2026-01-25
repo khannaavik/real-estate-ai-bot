@@ -1508,9 +1508,10 @@ export default function Home() {
 
   const startBatchPolling = () => {
     if (batchPollingRef.current) return;
+    // Poll every 4 seconds (between 3-5 seconds as requested)
     batchPollingRef.current = window.setInterval(() => {
       fetchBatchStatus();
-    }, 5000);
+    }, 4000);
     setIsBatchPolling(true);
   };
 
@@ -1530,14 +1531,21 @@ export default function Home() {
     };
   }, [selectedCampaign?.id, mockMode]);
 
+  // Poll batch status every 3-5 seconds when campaign is selected
   useEffect(() => {
-    if (!selectedCampaign || mockMode) return;
-    if (batchState === "RUNNING") {
-      startBatchPolling();
-    } else {
+    if (!selectedCampaign || mockMode) {
       stopBatchPolling();
+      return;
     }
-  }, [batchState, selectedCampaign?.id, mockMode]);
+
+    // Start polling immediately and continue polling regardless of state
+    // This ensures we get updates for IDLE, RUNNING, PAUSED, and COMPLETED states
+    startBatchPolling();
+
+    return () => {
+      stopBatchPolling();
+    };
+  }, [selectedCampaign?.id, mockMode]);
 
 
   // Toggle low-interest leads visibility
@@ -1581,9 +1589,13 @@ export default function Home() {
     }
 
     // Check if batch is already running (prevent duplicate starts)
-    // Button will be disabled in UI, so just return silently
     const currentState = batchStatus?.status || batchState || "IDLE";
-    if (currentState === "RUNNING" || currentState === "PAUSED") {
+    if (currentState === "RUNNING") {
+      setToast('Batch already running');
+      return;
+    }
+    if (currentState === "PAUSED") {
+      setToast('Batch is paused. Use Resume to continue.');
       return;
     }
 
@@ -1642,15 +1654,17 @@ export default function Home() {
         return;
       }
 
-      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/pause`, {
+      // Use new endpoint: /api/campaigns/:id/batch/pause
+      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/batch/pause`, {
         method: 'POST',
       });
 
-      if (res?.success) {
+      if (res?.ok && res?.batchState) {
+        setBatchStatus((prev) => prev ? { ...prev, status: res.batchState } : null);
         setToast('Batch paused');
         fetchBatchStatus();
       } else {
-        setToast('Failed to pause batch call');
+        setToast(res?.error || 'Failed to pause batch call');
       }
     } catch (err: any) {
       const errorMessage = err?.message || String(err);
@@ -1679,15 +1693,17 @@ export default function Home() {
         return;
       }
 
-      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/resume`, {
+      // Use new endpoint: /api/campaigns/:id/batch/resume
+      const res: any = await apiFetch(`${API_BASE}/api/campaigns/${selectedCampaign.id}/batch/resume`, {
         method: 'POST',
       });
 
-      if (res?.success) {
+      if (res?.ok && res?.batchState) {
+        setBatchStatus((prev) => prev ? { ...prev, status: res.batchState } : null);
         setToast('Batch resumed');
         fetchBatchStatus();
       } else {
-        setToast('Failed to resume batch call');
+        setToast(res?.error || 'Failed to resume batch call');
       }
     } catch (err: any) {
       const errorMessage = err?.message || String(err);
@@ -1879,7 +1895,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="bg-slate-50 flex flex-col">
       {/* Sticky Header */}
       <header className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-200 shadow-sm overflow-hidden">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4">
@@ -2297,7 +2313,7 @@ export default function Home() {
                             onClick={startBatchCall}
                             disabled={isStartingBatch || isRunning || !hasLeads}
                             className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            title={!hasLeads ? "No leads to call. Add leads first." : ""}
+                            title={!hasLeads ? "No leads to call. Add leads first." : isRunning ? "Batch already running" : ""}
                           >
                             {isStartingBatch ? 'Starting...' : hasLeads ? 'Start Batch Call' : 'No leads to call'}
                           </button>
@@ -2325,14 +2341,28 @@ export default function Home() {
                             disabled
                             className="px-3 py-1.5 bg-gray-400 text-white text-xs font-semibold rounded-md cursor-not-allowed transition-colors"
                           >
-                            Batch Completed
+                            Completed
                           </button>
                         )}
                         {/* Status indicator for active batches */}
-                        {(isRunning || isPaused) && (
-                          <span className="text-xs text-gray-500">
-                            {batchStatus?.pending ?? 0} pending • {batchStatus?.inProgress ?? 0} in progress
-                          </span>
+                        {(isRunning || isPaused || isCompleted) && (
+                          <div className="flex items-center gap-2">
+                            {/* Status badge */}
+                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                              isRunning ? 'bg-green-100 text-green-700' :
+                              isPaused ? 'bg-orange-100 text-orange-700' :
+                              isCompleted ? 'bg-gray-100 text-gray-700' :
+                              'bg-gray-100 text-gray-700'
+                            }`}>
+                              {isRunning ? 'RUNNING' : isPaused ? 'PAUSED' : isCompleted ? 'COMPLETED' : ''}
+                            </span>
+                            {/* Progress indicator */}
+                            {(isRunning || isPaused) && (
+                              <span className="text-xs text-gray-500">
+                                {batchStatus?.pending ?? 0} pending • {batchStatus?.inProgress ?? 0} in progress
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     );
@@ -2471,7 +2501,7 @@ export default function Home() {
                         return (
                         <div
                           key={cc.id}
-                          className={`group bg-white rounded-lg border border-gray-200 ${
+                          className={`group bg-white rounded-lg border border-gray-200 shadow-sm ${
                             // Mobile: stacked, Tablet/Desktop: horizontal flex
                             'md:flex md:items-center md:justify-between md:p-4 lg:p-5 md:cursor-pointer'
                           } ${

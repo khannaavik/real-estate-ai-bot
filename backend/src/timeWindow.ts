@@ -170,21 +170,55 @@ export function isWithinBatchCallWindow(
 }
 
 /**
- * Check if current time is within call window (10:00 AM - 7:00 PM IST).
- * Used during batch processing to auto-pause if outside window.
+ * Parse HH:mm time string to hours and minutes
+ * @param timeStr - Time string in HH:mm format (e.g., "10:00", "19:30")
+ * @returns Object with hour and minute, or null if invalid
+ */
+function parseTimeString(timeStr: string | undefined): { hour: number; minute: number } | null {
+  if (!timeStr) return null;
+  const parts = timeStr.split(':');
+  if (parts.length !== 2) return null;
+  const hour = parseInt(parts[0], 10);
+  const minute = parseInt(parts[1], 10);
+  if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+  return { hour, minute };
+}
+
+/**
+ * Check if current time is within call window.
+ * Uses CALL_WINDOW_START and CALL_WINDOW_END env vars (HH:mm format, IST).
+ * Falls back to 10:00-19:00 if env vars not set.
  * 
  * @param now - Date to check (defaults to current time)
  * @param timezone - Timezone string (defaults to "Asia/Kolkata")
- * @param startHour - Start hour (defaults to 10)
- * @param endHour - End hour (defaults to 19)
  * @returns true if within call window, false otherwise
  */
 export function isWithinCallWindow(
   now: Date = new Date(),
-  timezone: string = "Asia/Kolkata",
-  startHour: number = 10,
-  endHour: number = 19
+  timezone: string = "Asia/Kolkata"
 ): boolean {
+  // Parse window times from environment variables (HH:mm format)
+  const windowStartStr = process.env.CALL_WINDOW_START;
+  const windowEndStr = process.env.CALL_WINDOW_END;
+  
+  let windowStart: number;
+  let windowEnd: number;
+  
+  const parsedStart = parseTimeString(windowStartStr);
+  const parsedEnd = parseTimeString(windowEndStr);
+  
+  if (parsedStart && parsedEnd) {
+    // Use env vars if both are valid
+    windowStart = parsedStart.hour * 60 + parsedStart.minute;
+    windowEnd = parsedEnd.hour * 60 + parsedEnd.minute;
+  } else {
+    // Fallback to defaults (10:00 - 19:00)
+    windowStart = 10 * 60; // 10:00
+    windowEnd = 19 * 60; // 19:00 (7:00 PM)
+  }
+  
   // Convert to target timezone
   const localTime = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
   
@@ -192,10 +226,6 @@ export function isWithinCallWindow(
   const hours = localTime.getHours();
   const minutes = localTime.getMinutes();
   const timeInMinutes = hours * 60 + minutes;
-  
-  // Define call window in minutes from midnight
-  const windowStart = startHour * 60; // 10:00
-  const windowEnd = endHour * 60; // 19:00 (7:00 PM)
   
   // Check if within window
   return timeInMinutes >= windowStart && timeInMinutes <= windowEnd;
