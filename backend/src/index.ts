@@ -25,7 +25,7 @@ import { eventBus, type SSEEvent } from "./eventBus";
 import { decideNextConversationStep } from "./adaptiveConversationEngine";
 import { recordOutcomePattern as recordCallOutcomePattern, suggestOptimizedStrategy } from "./callOutcomeLearning";
 import { getRetryMetadata, updateRetryMetadata } from "./batchOrchestrator";
-import { getNextValidCallTime, formatNextCallTime, isWithinBatchCallWindow } from "./timeWindow";
+import { getNextValidCallTime, formatNextCallTime, isWithinBatchCallWindow, isWithinCallWindow } from "./timeWindow";
 import { recordOutcomePattern, getTopPatterns } from "./outcomeLearning";
 import { selectAdaptiveStrategy, type AdaptiveStrategyContext, selectBestStrategyForAutoApply, type AutoApplyStrategyResult } from "./adaptiveStrategy";
 import { getScriptModeFromLeadStatus, getOpeningLine, getProbingQuestions, getMainPitchPoints, getClosingLine, ScriptMode as ConversationScriptMode } from "./conversationStrategy";
@@ -46,6 +46,7 @@ dotenv.config();
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
 const DRY_RUN_CALLS = process.env.DRY_RUN_CALLS !== "false";
+const CALL_MODE = (process.env.CALL_MODE || "DRY").toUpperCase(); // DRY or LIVE
 
 console.log('[STARTUP] Environment:', NODE_ENV);
 console.log('[STARTUP] PORT:', PORT, process.env.PORT ? '(from env)' : '(fallback to 4000)');
@@ -2684,14 +2685,24 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
 
     console.log(`[BATCH START] Campaign ${campaignId}`);
 
-    if (DRY_RUN_CALLS) {
+    // Use CALL_MODE to determine which worker to use
+    const callMode = CALL_MODE === "LIVE" ? "LIVE" : "DRY";
+    
+    if (callMode === "LIVE") {
+      // TODO: Implement live call worker
+      // For now, fall back to dry run if LIVE mode not fully implemented
+      console.log(`[BATCH] LIVE mode requested but not yet implemented, using DRY mode`);
       void startDryRunCallWorker(campaignId);
       return res.json({ started: true, mode: "DRY_RUN", batchId: campaignId });
+    } else {
+      // DRY mode (default)
+      if (DRY_RUN_CALLS) {
+        void startDryRunCallWorker(campaignId);
+        return res.json({ started: true, mode: "DRY_RUN", batchId: campaignId });
+      }
+      void startDryRunBatch(campaignId);
+      return res.json({ started: true, mode: "DRY_RUN" });
     }
-
-    void startDryRunBatch(campaignId);
-
-    res.json({ started: true });
   } catch (err: any) {
     console.error("Start batch error:", err);
     res.status(500).json({
@@ -2755,14 +2766,44 @@ apiRoutes.post("/campaigns/:campaignId/resume-batch", async (req: Request, res: 
       return res.status(400).json({ ok: false, error: "campaignId is required" });
     }
 
+    // Call Window Guard: Check if within allowed call window (10:00-19:00 IST)
+    if (!isWithinCallWindow()) {
+      console.log("[CALL WINDOW] Outside allowed hours - cannot resume");
+      return res.status(400).json({
+        ok: false,
+        error: "Cannot resume batch outside call window (10:00 AM - 7:00 PM IST)",
+      });
+    }
+
+    // Reset any IN_PROGRESS leads back to PENDING for resume (safety: avoid duplicates)
+    const resetCount = await prisma.campaignContact.updateMany({
+      where: {
+        campaignId,
+        callStatus: "IN_PROGRESS",
+      },
+      data: { callStatus: "PENDING" },
+    });
+    if (resetCount.count > 0) {
+      console.log(`[BATCH RESUME] Reset ${resetCount.count} IN_PROGRESS leads to PENDING for campaign ${campaignId}`);
+    }
+
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { batchState: BatchState.RUNNING, batchActive: true },
     });
+    console.log(`[BATCH TRANSITION] Campaign ${campaignId}: PAUSED -> RUNNING (manual resume)`);
 
-    void startDryRunCallWorker(campaignId);
-    console.log(`[BATCH] Resumed campaign ${campaignId}`);
-    res.json({ status: "resumed" });
+    const callMode = CALL_MODE === "LIVE" ? "LIVE" : "DRY";
+    if (callMode === "LIVE") {
+      // TODO: Implement live call worker
+      console.log(`[BATCH] LIVE mode requested but not yet implemented, using DRY mode`);
+      void startDryRunCallWorker(campaignId);
+    } else {
+      void startDryRunCallWorker(campaignId);
+    }
+    
+    console.log(`[BATCH] Resumed campaign ${campaignId} (mode: ${callMode})`);
+    res.json({ status: "resumed", mode: callMode });
   } catch (err: any) {
     console.error("Resume batch error:", err);
     res.status(200).json({ status: "resumed" });
@@ -2820,16 +2861,46 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
       return res.status(404).json({ ok: false, error: "Campaign not found" });
     }
 
+    // Call Window Guard: Check if within allowed call window (10:00-19:00 IST)
+    if (!isWithinCallWindow()) {
+      console.log("[CALL WINDOW] Outside allowed hours - cannot resume");
+      return res.status(400).json({
+        ok: false,
+        error: "Cannot resume batch outside call window (10:00 AM - 7:00 PM IST)",
+      });
+    }
+
+    // Reset any IN_PROGRESS leads back to PENDING for resume (safety: avoid duplicates)
+    const resetCount = await prisma.campaignContact.updateMany({
+      where: {
+        campaignId,
+        callStatus: "IN_PROGRESS",
+      },
+      data: { callStatus: "PENDING" },
+    });
+    if (resetCount.count > 0) {
+      console.log(`[BATCH RESUME] Reset ${resetCount.count} IN_PROGRESS leads to PENDING for campaign ${campaignId}`);
+    }
+
     if (campaign.batchState !== BatchState.RUNNING) {
       await prisma.campaign.update({
         where: { id: campaignId },
         data: { batchState: BatchState.RUNNING, batchActive: true },
       });
+      console.log(`[BATCH TRANSITION] Campaign ${campaignId}: ${campaign.batchState} -> RUNNING (manual resume)`);
     }
 
-    void startDryRunCallWorker(campaignId);
-    console.log(`[BATCH] Resumed campaign ${campaignId}`);
-    res.json({ success: true, batchState: BatchState.RUNNING });
+    const callMode = CALL_MODE === "LIVE" ? "LIVE" : "DRY";
+    if (callMode === "LIVE") {
+      // TODO: Implement live call worker
+      console.log(`[BATCH] LIVE mode requested but not yet implemented, using DRY mode`);
+      void startDryRunCallWorker(campaignId);
+    } else {
+      void startDryRunCallWorker(campaignId);
+    }
+    
+    console.log(`[BATCH] Resumed campaign ${campaignId} (mode: ${callMode})`);
+    res.json({ success: true, batchState: BatchState.RUNNING, mode: callMode });
   } catch (err: any) {
     console.error("Resume batch error:", err);
     res.status(200).json({ success: true, batchState: BatchState.RUNNING });

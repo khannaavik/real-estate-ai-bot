@@ -168,3 +168,35 @@ export function isWithinBatchCallWindow(
   // Check if within window
   return timeInMinutes >= windowStart && timeInMinutes <= windowEnd;
 }
+
+/**
+ * Check if current time is within call window (10:00 AM - 7:00 PM IST).
+ * Used during batch processing to auto-pause if outside window.
+ * 
+ * @param now - Date to check (defaults to current time)
+ * @param timezone - Timezone string (defaults to "Asia/Kolkata")
+ * @param startHour - Start hour (defaults to 10)
+ * @param endHour - End hour (defaults to 19)
+ * @returns true if within call window, false otherwise
+ */
+export function isWithinCallWindow(
+  now: Date = new Date(),
+  timezone: string = "Asia/Kolkata",
+  startHour: number = 10,
+  endHour: number = 19
+): boolean {
+  // Convert to target timezone
+  const localTime = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+  
+  // Get hours and minutes in local time
+  const hours = localTime.getHours();
+  const minutes = localTime.getMinutes();
+  const timeInMinutes = hours * 60 + minutes;
+  
+  // Define call window in minutes from midnight
+  const windowStart = startHour * 60; // 10:00
+  const windowEnd = endHour * 60; // 19:00 (7:00 PM)
+  
+  // Check if within window
+  return timeInMinutes >= windowStart && timeInMinutes <= windowEnd;
+}

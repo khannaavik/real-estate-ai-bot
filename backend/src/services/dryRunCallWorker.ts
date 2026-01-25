@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { prisma } from "../prisma";
+import { isWithinCallWindow } from "../timeWindow";
+import { BatchState } from "@prisma/client";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,6 +101,8 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
     console.log(`[BATCH START] Campaign ${campaignId}`);
     console.log(`[DRY-RUN] Batch started ${campaignId}`);
 
+    // Resume support: Only pick leads with callStatus = PENDING
+    // Skips COMPLETED, FAILED, BUSY automatically via query filter
     const contacts = await prisma.campaignContact.findMany({
       where: { campaignId, callStatus: "PENDING" },
       orderBy: { createdAt: "asc" },
@@ -107,11 +111,13 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
         contact: { select: { phone: true } },
       },
     });
+    
+    console.log(`[BATCH RESUME] Found ${contacts.length} PENDING leads for campaign ${campaignId}`);
 
     if (contacts.length === 0) {
       await prisma.campaign.update({
         where: { id: campaignId },
-        data: { batchActive: false, batchState: "COMPLETED" },
+        data: { batchActive: false, batchState: BatchState.COMPLETED },
       });
       console.log(`[BATCH COMPLETE] Campaign ${campaignId}`);
       console.log(`[DRY-RUN] Batch completed ${campaignId}`);
@@ -135,28 +141,51 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
 
         console.log(`[BATCH] State check: ${campaign?.batchState ?? "UNKNOWN"}`);
 
-        if (!campaign?.batchActive || campaign.batchState === "STOPPED") {
+        if (!campaign?.batchActive || campaign.batchState === BatchState.STOPPED) {
           console.log(`[BATCH] Stopped campaign ${campaignId}`);
           break;
         }
 
-        if (campaign.batchState === "COMPLETED") {
+        if (campaign.batchState === BatchState.COMPLETED) {
           console.log(`[BATCH] Completed campaign ${campaignId}`);
           break;
         }
 
-        while (campaign.batchState === "PAUSED") {
+        // Call Window Guard: Check if within allowed call window (10:00-19:00 IST)
+        if (!isWithinCallWindow()) {
+          console.log("[CALL WINDOW] Outside allowed hours");
+          // Auto-pause the batch
+          await prisma.campaign.update({
+            where: { id: campaignId },
+            data: { batchState: BatchState.PAUSED, batchActive: true },
+          });
+          console.log(`[BATCH TRANSITION] Campaign ${campaignId}: RUNNING -> PAUSED (call window restriction)`);
+          break;
+        }
+
+        while (campaign.batchState === BatchState.PAUSED) {
           console.log(`[BATCH] Paused campaign ${campaignId}`);
+          // Check call window while paused - if window opens, resume automatically
+          if (isWithinCallWindow()) {
+            console.log("[CALL WINDOW] Window opened, resuming batch");
+            await prisma.campaign.update({
+              where: { id: campaignId },
+              data: { batchState: BatchState.RUNNING, batchActive: true },
+            });
+            console.log(`[BATCH TRANSITION] Campaign ${campaignId}: PAUSED -> RUNNING (call window opened)`);
+            campaign.batchState = BatchState.RUNNING;
+            break;
+          }
           await sleep(2000);
           const refreshedCampaign = await prisma.campaign.findUnique({
             where: { id: campaignId },
             select: { batchActive: true, batchState: true },
           });
-          if (!refreshedCampaign?.batchActive || refreshedCampaign.batchState === "STOPPED") {
+          if (!refreshedCampaign?.batchActive || refreshedCampaign.batchState === BatchState.STOPPED) {
             console.log(`[BATCH] Stopped campaign ${campaignId}`);
             return;
           }
-          if (refreshedCampaign.batchState === "COMPLETED") {
+          if (refreshedCampaign.batchState === BatchState.COMPLETED) {
             console.log(`[BATCH] Completed campaign ${campaignId}`);
             return;
           }
@@ -291,11 +320,11 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
     if (
       pendingCount === 0 &&
       inProgressCount === 0 &&
-      finalCampaign?.batchState !== "STOPPED"
+      finalCampaign?.batchState !== BatchState.STOPPED
     ) {
       await prisma.campaign.update({
         where: { id: campaignId },
-        data: { batchActive: false, batchState: "COMPLETED" },
+        data: { batchActive: false, batchState: BatchState.COMPLETED },
       });
       console.log(`[BATCH COMPLETE] Campaign ${campaignId}`);
       console.log(`[BATCH] Completed campaign ${campaignId}`);
