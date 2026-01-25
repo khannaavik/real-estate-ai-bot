@@ -5,10 +5,22 @@ html,
 body,
 #__next {
   height: 100%;
+  overflow: hidden;
+}
+
+html {
+  overflow: hidden;
 }
 
 body {
   overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+#__next {
+  overflow: hidden;
+  height: 100vh;
 }
 @keyframes slideInRight {
   from {

@@ -11,6 +11,9 @@ function sleep(ms: number): Promise<void> {
 const MAX_CONCURRENT_CALLS = parseInt(process.env.MAX_CONCURRENT_CALLS || "1", 10);
 const CALL_DELAY_MS = parseInt(process.env.CALL_DELAY_MS || "45000", 10);
 
+// Prevent parallel batches per campaign
+const activeBatches = new Set<string>();
+
 function randomBetweenMs(minSeconds: number, maxSeconds: number): number {
   const minMs = minSeconds * 1000;
   const maxMs = maxSeconds * 1000;
@@ -97,6 +100,13 @@ async function generateAiSummary(input: {
 }
 
 export async function startDryRunCallWorker(campaignId: string): Promise<void> {
+  // Batch State Safety: Ensure only ONE batch runs per campaign
+  if (activeBatches.has(campaignId)) {
+    console.log(`[BATCH] Campaign ${campaignId} already has an active batch, skipping`);
+    return;
+  }
+  activeBatches.add(campaignId);
+
   try {
     console.log(`[BATCH START] Campaign ${campaignId}`);
     console.log(`[DRY-RUN] Batch started ${campaignId}`);
@@ -112,7 +122,11 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
       },
     });
     
-    console.log(`[BATCH RESUME] Found ${contacts.length} PENDING leads for campaign ${campaignId}`);
+    if (contacts.length === 0) {
+      console.log(`[BATCH RESUME] Campaign ${campaignId} - No PENDING leads found`);
+    } else {
+      console.log(`[BATCH RESUME] Campaign ${campaignId} - Found ${contacts.length} PENDING leads`);
+    }
 
     if (contacts.length === 0) {
       await prisma.campaign.update({
@@ -147,24 +161,13 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
         }
 
         if (campaign.batchState === BatchState.COMPLETED) {
-          console.log(`[BATCH] Completed campaign ${campaignId}`);
+          console.log(`[BATCH COMPLETED] Campaign ${campaignId}`);
           break;
         }
 
-        // Call Window Guard: Check if within allowed call window (10:00-19:00 IST)
-        if (!isWithinCallWindow()) {
-          console.log("[CALL WINDOW] Outside allowed hours");
-          // Auto-pause the batch
-          await prisma.campaign.update({
-            where: { id: campaignId },
-            data: { batchState: BatchState.PAUSED, batchActive: true },
-          });
-          console.log(`[BATCH TRANSITION] Campaign ${campaignId}: RUNNING -> PAUSED (call window restriction)`);
-          break;
-        }
-
+        // Handle paused state
         while (campaign.batchState === BatchState.PAUSED) {
-          console.log(`[BATCH] Paused campaign ${campaignId}`);
+          console.log(`[BATCH PAUSED] Campaign ${campaignId}`);
           // Check call window while paused - if window opens, resume automatically
           if (isWithinCallWindow()) {
             console.log("[CALL WINDOW] Window opened, resuming batch");
@@ -186,16 +189,40 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
             return;
           }
           if (refreshedCampaign.batchState === BatchState.COMPLETED) {
-            console.log(`[BATCH] Completed campaign ${campaignId}`);
+            console.log(`[BATCH COMPLETED] Campaign ${campaignId}`);
             return;
           }
           campaign.batchState = refreshedCampaign.batchState;
         }
 
-        await prisma.campaignContact.update({
-          where: { id: contact.id },
+        // Claim the lead atomically (prevents parallel calls)
+        const claim = await prisma.campaignContact.updateMany({
+          where: { id: contact.id, callStatus: "PENDING" },
           data: { callStatus: "IN_PROGRESS" },
         });
+
+        if (claim.count === 0) {
+          // Lead was already claimed or not in PENDING state, skip
+          console.log(`[BATCH] Lead ${contact.id} already processed, skipping`);
+          continue;
+        }
+
+        // Call Window Guard: Check BEFORE starting EACH call (10:00-19:00 IST)
+        if (!isWithinCallWindow()) {
+          console.log("[CALL WINDOW] Outside allowed hours — auto-pausing batch");
+          // Reset the lead back to PENDING since we didn't actually call
+          await prisma.campaignContact.update({
+            where: { id: contact.id },
+            data: { callStatus: "PENDING" },
+          });
+          // Auto-pause the batch
+          await prisma.campaign.update({
+            where: { id: campaignId },
+            data: { batchState: BatchState.PAUSED, batchActive: true },
+          });
+          console.log(`[BATCH PAUSED] Campaign ${campaignId} - Call window restriction`);
+          break;
+        }
 
         console.log(`[CALL START] Lead ${contact.id}`);
         console.log(`[DRY-RUN] Calling ${contact.contact?.phone || contact.id}`);
@@ -331,5 +358,8 @@ export async function startDryRunCallWorker(campaignId: string): Promise<void> {
     }
   } catch (err) {
     console.error(`[DRY-RUN] Batch failed ${campaignId}`, err);
+  } finally {
+    // Always remove from active batches set
+    activeBatches.delete(campaignId);
   }
 }

@@ -2784,14 +2784,14 @@ apiRoutes.post("/campaigns/:campaignId/resume-batch", async (req: Request, res: 
       data: { callStatus: "PENDING" },
     });
     if (resetCount.count > 0) {
-      console.log(`[BATCH RESUME] Reset ${resetCount.count} IN_PROGRESS leads to PENDING for campaign ${campaignId}`);
+      console.log(`[BATCH RESUME] Campaign ${campaignId} - Reset ${resetCount.count} IN_PROGRESS leads to PENDING`);
     }
 
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { batchState: BatchState.RUNNING, batchActive: true },
     });
-    console.log(`[BATCH TRANSITION] Campaign ${campaignId}: PAUSED -> RUNNING (manual resume)`);
+    console.log(`[BATCH RESUME] Campaign ${campaignId}`);
 
     const callMode = CALL_MODE === "LIVE" ? "LIVE" : "DRY";
     if (callMode === "LIVE") {
@@ -2870,6 +2870,15 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
       });
     }
 
+    // Call Window Guard: Check if within allowed call window (10:00-19:00 IST)
+    if (!isWithinCallWindow()) {
+      console.log("[CALL WINDOW] Outside allowed hours - cannot resume");
+      return res.status(400).json({
+        ok: false,
+        error: "Cannot resume batch outside call window (10:00 AM - 7:00 PM IST)",
+      });
+    }
+
     // Reset any IN_PROGRESS leads back to PENDING for resume (safety: avoid duplicates)
     const resetCount = await prisma.campaignContact.updateMany({
       where: {
@@ -2879,7 +2888,7 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
       data: { callStatus: "PENDING" },
     });
     if (resetCount.count > 0) {
-      console.log(`[BATCH RESUME] Reset ${resetCount.count} IN_PROGRESS leads to PENDING for campaign ${campaignId}`);
+      console.log(`[BATCH RESUME] Campaign ${campaignId} - Reset ${resetCount.count} IN_PROGRESS leads to PENDING`);
     }
 
     if (campaign.batchState !== BatchState.RUNNING) {
@@ -2887,7 +2896,7 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
         where: { id: campaignId },
         data: { batchState: BatchState.RUNNING, batchActive: true },
       });
-      console.log(`[BATCH TRANSITION] Campaign ${campaignId}: ${campaign.batchState} -> RUNNING (manual resume)`);
+      console.log(`[BATCH RESUME] Campaign ${campaignId}`);
     }
 
     const callMode = CALL_MODE === "LIVE" ? "LIVE" : "DRY";
