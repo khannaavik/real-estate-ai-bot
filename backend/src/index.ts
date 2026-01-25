@@ -3110,8 +3110,8 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
       void startDryRunCallWorker(campaignId);
     }
     
-    console.log(`[BATCH] Resumed campaign ${campaignId} (mode: ${callMode})`);
-    res.json({ success: true, batchState: BatchState.RUNNING, mode: callMode });
+    console.log(`[BATCH] Resumed campaign ${campaignId} (mode: ${CALL_MODE})`);
+    res.json({ success: true, batchState: BatchState.RUNNING, mode: CALL_MODE });
   } catch (err: any) {
     console.error("Resume batch error:", err);
     res.status(200).json({ success: true, batchState: BatchState.RUNNING });
