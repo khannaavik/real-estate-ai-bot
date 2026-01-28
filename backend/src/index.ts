@@ -436,12 +436,20 @@ app.get("/test-call", async (req: Request, res: Response) => {
       });
       
       console.error("Twilio test call error:", err?.message || err);
-      res.status(500).json({
+      return res.status(500).json({
         ok: false,
         error: "Failed to start test call",
         details: String(err?.message || err),
       });
     }
+  } catch (err: any) {
+    console.error("Test call handler error:", err?.message || err);
+    return res.status(500).json({
+      ok: false,
+      error: "Failed to start test call",
+      details: String(err?.message || err),
+    });
+  }
 });
 
 
