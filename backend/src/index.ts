@@ -5,7 +5,7 @@ import OpenAI from 'openai';
  
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { BatchCallStatus, BatchState, CallLifecycleStatus, CallStatus, PrismaClient } from "@prisma/client";
+import { BatchCallStatus, BatchState, CallLifecycleStatus, CallStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { pinAuthMiddleware } from './middleware/pinAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
@@ -232,21 +232,6 @@ function logTwilioCallError(params: {
 
 const app = express();
 const apiRoutes = express.Router();
-
-// Direct Prisma client for batch status queries (bypass Accelerate)
-const directPrisma = (() => {
-  try {
-    if (!process.env.DATABASE_URL) {
-      throw new Error("DATABASE_URL is not set");
-    }
-    return new PrismaClient({
-      datasources: { db: { url: process.env.DATABASE_URL } },
-    } as any);
-  } catch (err) {
-    console.error("[BATCH STATUS SAFE ERROR] Direct Prisma init failed:", err);
-    return null;
-  }
-})();
 
 // Server start time for uptime calculation (zero-dependency)
 const serverStartTime = Date.now();
@@ -3437,10 +3422,7 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
 
     let campaign: { id: string; batchActive: boolean; batchState: BatchState } | null = null;
     try {
-      if (!directPrisma) {
-        throw new Error("Direct Prisma client unavailable");
-      }
-      campaign = await directPrisma.campaign.findUnique({
+      campaign = await prisma.campaign.findUnique({
         where: { id: campaignId },
         select: { id: true, batchActive: true, batchState: true },
       });
@@ -3461,10 +3443,7 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
 
     const safeCount = async (status: CallStatus) => {
       try {
-        if (!directPrisma) {
-          throw new Error("Direct Prisma client unavailable");
-        }
-        return await directPrisma.campaignContact.count({
+        return await prisma.campaignContact.count({
           where: { campaignId, callStatus: status },
         });
       } catch (err) {
