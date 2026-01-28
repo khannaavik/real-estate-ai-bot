@@ -389,9 +389,9 @@ app.get("/test-call", async (req: Request, res: Response) => {
     }
 
     try {
-      const callSid = await createLiveCall({ to });
+      const call = await createLiveCall({ to });
       res.json({
-        callSid,
+        callSid: call.sid,
       });
     } catch (err: any) {
       // Structured logging on error
@@ -673,11 +673,12 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
       callMode: CALL_MODE,
       twimlSource: "inline",
     });
-    const callSid = await createLiveCall({
+    const call = await createLiveCall({
       to,
       campaignId: campaignContact.campaignId,
       leadId: campaignContact.id,
     });
+    const callSid = call.sid;
 
     // STEP 21: Create call log with auto-applied strategy if available (safe try/catch for backward compatibility)
     let callLog;

@@ -312,11 +312,12 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
         let callDuration = 0;
 
         try {
-          callSid = await createLiveCall({
+          const call = await createLiveCall({
             to: phoneNumber,
             campaignId: campaignId,
             leadId: contact.id,
           });
+          callSid = call.sid;
           
           console.log(`[TWILIO] Call SID: ${callSid}`);
 

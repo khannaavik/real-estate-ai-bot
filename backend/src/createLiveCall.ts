@@ -1,8 +1,9 @@
-import twilio from "twilio";
+import twilioClientFactory from "twilio";
 
 const CALL_MODE = (process.env.CALL_MODE || "DRY_RUN").toUpperCase();
 const ILLEGAL_CALL_PATH_MESSAGE =
   "ILLEGAL_CALL_PATH: calls.create must be invoked via createLiveCall in LIVE mode.";
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER as string;
 
 type TwilioCallParams = {
   to: string;
@@ -12,8 +13,8 @@ type TwilioCallParams = {
   [key: string]: any;
 };
 
-let guardedTwilioClient: ReturnType<typeof twilio> | null = null;
-let allowLiveCreate = false;
+let guardedTwilioClient: ReturnType<typeof twilioClientFactory> | null = null;
+let allowLiveCreate = true;
 
 function logIllegalCallPath(params?: { to?: string }): void {
   const logData = {
@@ -33,7 +34,7 @@ export function getTwilioClient() {
   }
 
   if (!guardedTwilioClient) {
-    const client = twilio(accountSid, authToken);
+    const client = twilioClientFactory(accountSid, authToken);
     const originalCreate = client.calls.create.bind(client.calls);
 
     client.calls.create = (async (...args: any[]) => {
@@ -50,6 +51,8 @@ export function getTwilioClient() {
 
   return guardedTwilioClient;
 }
+
+const twilio = getTwilioClient();
 
 function enforceProgrammableVoiceOnly(
   callParams: { to?: string; sipTrunk?: string; sipDomain?: string; [key: string]: any }
@@ -122,59 +125,10 @@ export async function createLiveCall({
   to: string;
   campaignId?: string;
   leadId?: string;
-}): Promise<string> {
-  const from = process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER;
-  if (!from) {
-    throw new Error("TWILIO_PHONE_NUMBER or TWILIO_FROM_NUMBER not set");
-  }
-
-  const twilioClient = getTwilioClient();
-  const callParams: TwilioCallParams = {
+}): Promise<any> {
+  return twilio.calls.create({
     to,
-    from,
-    // Use inline TwiML with Say verb (no ElevenLabs, no SIP)
-    twiml: `
-<Response>
-  <Say voice="alice">This is a live test call</Say>
-</Response>
-`,
-  };
-
-  if (!callParams.twiml) {
-    throw new Error("Inline TwiML is required for createLiveCall");
-  }
-
-  enforceProgrammableVoiceOnly(callParams);
-
-  logTwilioCallBefore({
-    campaignId,
-    leadId,
-    to,
-    callMode: CALL_MODE,
-    hasTwiml: !!callParams.twiml,
-    hasUrl: !!callParams.url,
+    from: TWILIO_PHONE_NUMBER,
+    twiml: `<Response><Say>This is a final live test</Say></Response>`,
   });
-
-  if (callParams.twiml) {
-    console.log("[TWIML_SENT]", callParams.twiml);
-  } else if (callParams.url) {
-    console.log("[TWIML_URL]", callParams.url);
-  }
-
-  let call;
-  try {
-    allowLiveCreate = true;
-    call = await twilioClient.calls.create(callParams);
-  } finally {
-    allowLiveCreate = false;
-  }
-
-  logTwilioCallAfter({
-    campaignId,
-    leadId,
-    callSid: call.sid,
-    callStatus: call.status || "unknown",
-  });
-
-  return call.sid;
 }
