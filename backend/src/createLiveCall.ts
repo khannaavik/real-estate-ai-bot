@@ -133,8 +133,11 @@ export async function createLiveCall({
     to,
     from,
     // Use inline TwiML with Say verb (no ElevenLabs, no SIP)
-    twiml:
-      '<Response><Say>Hello, this is a test call from your real estate AI bot. This is a temporary test endpoint for manual verification.</Say></Response>',
+    twiml: `
+<Response>
+  <Say voice="alice">This is a live test call</Say>
+</Response>
+`,
   };
 
   if (!callParams.twiml) {
@@ -151,6 +154,12 @@ export async function createLiveCall({
     hasTwiml: !!callParams.twiml,
     hasUrl: !!callParams.url,
   });
+
+  if (callParams.twiml) {
+    console.log("[TWIML_SENT]", callParams.twiml);
+  } else if (callParams.url) {
+    console.log("[TWIML_URL]", callParams.url);
+  }
 
   let call;
   try {

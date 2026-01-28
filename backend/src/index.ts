@@ -666,6 +666,13 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
     const finalVoiceTone = autoAppliedStrategy?.voiceTone || adaptiveStrategy.voiceTone;
 
     const to = campaignContact.contact.phone;
+    console.log("[FRONTEND_CALL_ENTRY]", {
+      to,
+      campaignId: campaignContact.campaignId,
+      leadId: campaignContact.id,
+      callMode: CALL_MODE,
+      twimlSource: "inline",
+    });
     const callSid = await createLiveCall({
       to,
       campaignId: campaignContact.campaignId,
@@ -815,6 +822,18 @@ app.get("/twilio/voice", (_req: Request, res: Response) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice">Hello. This is a live test call from CallBot.</Say>
+</Response>`;
+  res.status(200).type("text/xml").send(twiml);
+});
+app.get("/twiml", (req: Request, res: Response) => {
+  console.log("[TWIML_WEBHOOK_HIT]", {
+    path: req.path,
+    method: req.method,
+    timestamp: new Date().toISOString(),
+  });
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">This is a live test call</Say>
 </Response>`;
   res.status(200).type("text/xml").send(twiml);
 });
