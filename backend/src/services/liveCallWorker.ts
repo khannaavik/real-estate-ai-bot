@@ -1,4 +1,4 @@
-import twilio from "twilio";
+import { getTwilioClient as getGuardedTwilioClient, createLiveCall } from "../createLiveCall";
 import { prisma } from "../prisma";
 import { isWithinCallWindow } from "../timeWindow";
 import { DEFAULT_LIVE_TWIML } from "../twilioVoice";
@@ -18,20 +18,14 @@ const activeBatches = new Set<string>();
 
 // Initialize Twilio client
 function getTwilioClient() {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER;
-  
-  if (!accountSid || !authToken) {
-    throw new Error('TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN not set');
-  }
-  
+
   if (!fromNumber) {
-    throw new Error('TWILIO_PHONE_NUMBER or TWILIO_FROM_NUMBER not set');
+    throw new Error("TWILIO_PHONE_NUMBER or TWILIO_FROM_NUMBER not set");
   }
-  
+
   return {
-    client: twilio(accountSid, authToken),
+    client: getGuardedTwilioClient(),
     fromNumber,
   };
 }
@@ -318,37 +312,10 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
         let callDuration = 0;
 
         try {
-          const callParams: TwilioCallParams = {
+          callSid = await createLiveCall({
             to: phoneNumber,
-            from: twilioClient.fromNumber,
-            twiml: DEFAULT_LIVE_TWIML,
-          };
-          
-          // Validate media instructions before creating call (required for LIVE mode)
-          const fallbackUrl = getTwilioVoiceUrlFromEnv();
-          ensureCallMediaInstructions(callParams, fallbackUrl);
-          enforceProgrammableVoiceOnly(callParams);
-          
-          // Structured logging before call
-          logTwilioCallBefore({
             campaignId: campaignId,
             leadId: contact.id,
-            to: phoneNumber,
-            callMode: CALL_MODE,
-            hasTwiml: !!callParams.twiml,
-            hasUrl: !!callParams.url,
-          });
-          
-          const call = await twilioClient.client.calls.create(callParams);
-
-          callSid = call.sid;
-          
-          // Structured logging after call
-          logTwilioCallAfter({
-            campaignId: campaignId,
-            leadId: contact.id,
-            callSid: call.sid,
-            callStatus: call.status || 'unknown',
           });
           
           console.log(`[TWILIO] Call SID: ${callSid}`);

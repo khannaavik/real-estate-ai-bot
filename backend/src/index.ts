@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
-import twilio from "twilio";
+ 
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { BatchCallStatus, BatchState, CallLifecycleStatus, CallStatus } from "@prisma/client";
@@ -36,6 +36,7 @@ import { startDryRunCallWorker } from "./services/dryRunCallWorker";
 import { startLiveCallWorker } from "./services/liveCallWorker";
 import { enqueueCsvJob } from "./services/csvImportWorker";
 import { DEFAULT_LIVE_TWIML } from "./twilioVoice";
+import { createLiveCall, getTwilioClient } from "./createLiveCall";
 
 
 
@@ -67,18 +68,6 @@ if (CALL_MODE !== "DRY_RUN" && CALL_MODE !== "LIVE") {
 console.log('[STARTUP] Environment:', NODE_ENV);
 console.log('[STARTUP] PORT:', PORT, process.env.PORT ? '(from env)' : '(fallback to 4000)');
 console.log('[STARTUP] CALL_MODE:', CALL_MODE);
-
-// Lazy Twilio client initialization (only create when needed, not at module level)
-function getTwilioClient() {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  
-  if (!accountSid || !authToken) {
-    throw new Error('TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN not set');
-  }
-  
-  return twilio(accountSid, authToken);
-}
 
 /**
  * Validates that a Twilio call creation payload has either twiml or url.
@@ -141,13 +130,6 @@ type LiveBatchValidationResult =
   | { ok: true }
   | { ok: false; message: string; details: string[] };
 
-type TwilioCallParams = {
-  to: string;
-  from: string;
-  twiml?: string;
-  url?: string;
-  [key: string]: any;
-};
 
 function validateLiveBatchPrereqs(): LiveBatchValidationResult {
   const missing: string[] = [];
@@ -406,39 +388,10 @@ app.get("/test-call", async (req: Request, res: Response) => {
       });
     }
 
-    const twilioClient = getTwilioClient();
-    const callParams: TwilioCallParams = {
-      to,
-      from,
-      // Use inline TwiML with Say verb (no ElevenLabs, no SIP)
-      twiml: '<Response><Say>Hello, this is a test call from your real estate AI bot. This is a temporary test endpoint for manual verification.</Say></Response>',
-    };
-    
-    // Validate media instructions before creating call
-    const fallbackUrl = getTwilioVoiceUrlFromRequest(req);
-    ensureCallMediaInstructions(callParams, fallbackUrl);
-    enforceProgrammableVoiceOnly(callParams);
-    
-    // Structured logging before call
-    logTwilioCallBefore({
-      to,
-      callMode: CALL_MODE,
-      hasTwiml: !!callParams.twiml,
-      hasUrl: !!callParams.url,
-    });
-    
-    let call;
     try {
-      call = await twilioClient.calls.create(callParams);
-      
-      // Structured logging after call
-      logTwilioCallAfter({
-        callSid: call.sid,
-        callStatus: call.status || 'unknown',
-      });
-      
+      const callSid = await createLiveCall({ to });
       res.json({
-        callSid: call.sid,
+        callSid,
       });
     } catch (err: any) {
       // Structured logging on error
@@ -713,57 +666,11 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
     const finalVoiceTone = autoAppliedStrategy?.voiceTone || adaptiveStrategy.voiceTone;
 
     const to = campaignContact.contact.phone;
-    const from = process.env.TWILIO_PHONE_NUMBER;
-
-    if (!from) {
-      return res.status(400).json({ ok: false, error: "TWILIO_PHONE_NUMBER not set" });
-    }
-
-    const twilioClient = getTwilioClient();
-    const callParams: TwilioCallParams = {
+    const callSid = await createLiveCall({
       to,
-      from,
-      url: "https://329e26f3bac8.ngrok-free.app", // placeholder voice
-    };
-    
-    // Validate media instructions before creating call (required for LIVE mode)
-    const fallbackUrl = getTwilioVoiceUrlFromRequest(req);
-    ensureCallMediaInstructions(callParams, fallbackUrl);
-    enforceProgrammableVoiceOnly(callParams);
-    
-    // Structured logging before call
-    logTwilioCallBefore({
       campaignId: campaignContact.campaignId,
       leadId: campaignContact.id,
-      to,
-      callMode: CALL_MODE,
-      hasTwiml: !!callParams.twiml,
-      hasUrl: !!callParams.url,
     });
-    
-    let call;
-    try {
-      call = await twilioClient.calls.create(callParams);
-      
-      // Structured logging after call
-      logTwilioCallAfter({
-        campaignId: campaignContact.campaignId,
-        leadId: campaignContact.id,
-        callSid: call.sid,
-        callStatus: call.status || 'unknown',
-      });
-    } catch (err: any) {
-      // Structured logging on error
-      logTwilioCallError({
-        campaignId: campaignContact.campaignId,
-        leadId: campaignContact.id,
-        to,
-        error: err,
-      });
-      
-      // Re-throw to be handled by outer catch
-      throw err;
-    }
 
     // STEP 21: Create call log with auto-applied strategy if available (safe try/catch for backward compatibility)
     let callLog;
@@ -771,7 +678,7 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
       callLog = await prisma.callLog.create({
         data: {
           campaignContactId: campaignContact.id,
-          twilioCallSid: call.sid,
+          twilioCallSid: callSid,
           scriptVariant: finalScriptVariant,
           voiceTone: finalVoiceTone,
           speechRate: adaptiveStrategy.speechRate,
@@ -785,7 +692,7 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
         callLog = await prisma.callLog.create({
           data: {
             campaignContactId: campaignContact.id,
-            twilioCallSid: call.sid,
+            twilioCallSid: callSid,
           },
         });
       } else {
@@ -867,7 +774,7 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
       campaignContactId: campaignContact.id,
       data: {
         ...(updatedCampaignContact.lastCallAt && { lastCallAt: updatedCampaignContact.lastCallAt.toISOString() }),
-        callSid: call.sid,
+        callSid,
         callLogId: callLog.id,
         scriptMode: scriptMode as any, // STEP 20: Expose ScriptMode to frontend (cast to union type)
         openingLine: openingLine, // STEP 20: Expose generated opening line
@@ -889,7 +796,7 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
       ok: true,
       message: "Call started",
       to,
-      callSid: call.sid,
+      callSid,
       callLogId: callLog.id,
       scriptMode: scriptMode, // STEP 20: Expose ScriptMode to frontend
       openingLine: openingLine, // STEP 20: Expose generated opening line
