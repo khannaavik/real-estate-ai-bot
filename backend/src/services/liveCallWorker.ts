@@ -1,6 +1,7 @@
 import twilio from "twilio";
 import { prisma } from "../prisma";
 import { isWithinCallWindow } from "../timeWindow";
+import { DEFAULT_LIVE_TWIML } from "../twilioVoice";
 import { BatchState } from "@prisma/client";
 
 function sleep(ms: number): Promise<void> {
@@ -10,6 +11,7 @@ function sleep(ms: number): Promise<void> {
 // Rate limiting configuration from environment variables
 const MAX_CONCURRENT_CALLS = parseInt(process.env.MAX_CONCURRENT_CALLS || "1", 10);
 const CALL_DELAY_MS = parseInt(process.env.CALL_DELAY_MS || "45000", 10);
+const CALL_MODE = (process.env.CALL_MODE || "DRY_RUN").toUpperCase();
 
 // Prevent parallel batches per campaign
 const activeBatches = new Set<string>();
@@ -32,6 +34,136 @@ function getTwilioClient() {
     client: twilio(accountSid, authToken),
     fromNumber,
   };
+}
+
+/**
+ * Validates that a Twilio call creation payload has either twiml or url.
+ * Throws an error if neither is provided (required for LIVE mode calls).
+ * Do NOT rely on phone-number voice configuration.
+ */
+function validateCallMediaInstructions(callParams: { twiml?: string; url?: string; [key: string]: any }): void {
+  if (!callParams.twiml && !callParams.url) {
+    throw new Error(
+      'Twilio call requires either "twiml" (inline TwiML) or "url" (TwiML endpoint). ' +
+      'Phone-number voice configuration is not allowed. Provide explicit media instructions.'
+    );
+  }
+  
+  // Validate that if url is provided, it's a valid URL
+  if (callParams.url && typeof callParams.url === 'string') {
+    try {
+      new URL(callParams.url);
+    } catch {
+      throw new Error(`Invalid TwiML URL provided: ${callParams.url}`);
+    }
+  }
+}
+
+function getTwilioVoiceUrlFromEnv(): string | null {
+  const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BASE_URL;
+  if (!baseUrl) return null;
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  return `${trimmed}/twilio/voice`;
+}
+
+function ensureCallMediaInstructions(
+  callParams: { twiml?: string; url?: string; [key: string]: any },
+  fallbackUrl?: string | null
+): void {
+  if (!callParams.twiml && !callParams.url && fallbackUrl) {
+    callParams.url = fallbackUrl;
+  }
+  validateCallMediaInstructions(callParams);
+}
+
+function enforceProgrammableVoiceOnly(
+  callParams: { to?: string; sipTrunk?: string; sipDomain?: string; [key: string]: any }
+): void {
+  const sipEnabled = process.env.ENABLE_SIP_TRUNKING === "true";
+  if (CALL_MODE === "LIVE" && !sipEnabled) {
+    const toValue = typeof callParams.to === "string" ? callParams.to : "";
+    const looksLikeSip = toValue.toLowerCase().startsWith("sip:");
+    if (looksLikeSip || callParams.sipTrunk || callParams.sipDomain) {
+      throw new Error(
+        "SIP Trunking is disabled. Enable via ENABLE_SIP_TRUNKING=true to use SIP; " +
+          "otherwise only Programmable Voice with TwiML is allowed in LIVE mode."
+      );
+    }
+  }
+}
+
+/**
+ * Structured logging for Twilio outbound calls.
+ */
+function logTwilioCallBefore(params: {
+  campaignId?: string;
+  leadId?: string;
+  to: string;
+  callMode: string;
+  hasTwiml: boolean;
+  hasUrl: boolean;
+}): void {
+  const logData = {
+    event: 'TWILIO_CALL_BEFORE',
+    timestamp: new Date().toISOString(),
+    campaignId: params.campaignId || null,
+    leadId: params.leadId || null,
+    to: params.to,
+    callMode: params.callMode,
+    mediaType: params.hasTwiml ? 'twiml' : (params.hasUrl ? 'url' : 'NONE'),
+    hasMediaInstructions: params.hasTwiml || params.hasUrl,
+  };
+  
+  if (!logData.hasMediaInstructions) {
+    console.error('[TWILIO_CALL_BEFORE] ⚠️  WARNING: Call created WITHOUT TwiML/URL!', JSON.stringify(logData, null, 2));
+  } else {
+    console.log('[TWILIO_CALL_BEFORE]', JSON.stringify(logData, null, 2));
+  }
+}
+
+function logTwilioCallAfter(params: {
+  campaignId?: string;
+  leadId?: string;
+  callSid: string;
+  callStatus: string;
+}): void {
+  const logData = {
+    event: 'TWILIO_CALL_AFTER',
+    timestamp: new Date().toISOString(),
+    campaignId: params.campaignId || null,
+    leadId: params.leadId || null,
+    callSid: params.callSid,
+    callStatus: params.callStatus,
+  };
+  
+  console.log('[TWILIO_CALL_AFTER]', JSON.stringify(logData, null, 2));
+}
+
+function logTwilioCallError(params: {
+  campaignId?: string;
+  leadId?: string;
+  to?: string;
+  error: any;
+}): void {
+  const twilioError = params.error;
+  const logData = {
+    event: 'TWILIO_CALL_ERROR',
+    timestamp: new Date().toISOString(),
+    campaignId: params.campaignId || null,
+    leadId: params.leadId || null,
+    to: params.to || null,
+    error: {
+      message: twilioError?.message || String(twilioError),
+      code: twilioError?.code || null,
+      status: twilioError?.status || null,
+      moreInfo: twilioError?.moreInfo || null,
+      details: twilioError?.details || null,
+      // Include full error object for debugging
+      fullError: twilioError ? JSON.stringify(twilioError, Object.getOwnPropertyNames(twilioError)) : null,
+    },
+  };
+  
+  console.error('[TWILIO_CALL_ERROR]', JSON.stringify(logData, null, 2));
 }
 
 export async function startLiveCallWorker(campaignId: string): Promise<void> {
@@ -178,13 +310,39 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
         let callDuration = 0;
 
         try {
-          const call = await twilioClient.client.calls.create({
+          const callParams = {
             to: phoneNumber,
             from: twilioClient.fromNumber,
-            twiml: '<Response><Say>Hello, this is a test call from your AI calling system.</Say></Response>'
+            twiml: DEFAULT_LIVE_TWIML,
+          };
+          
+          // Validate media instructions before creating call (required for LIVE mode)
+          const fallbackUrl = getTwilioVoiceUrlFromEnv();
+          ensureCallMediaInstructions(callParams, fallbackUrl);
+          enforceProgrammableVoiceOnly(callParams);
+          
+          // Structured logging before call
+          logTwilioCallBefore({
+            campaignId: campaignId,
+            leadId: contact.id,
+            to: phoneNumber,
+            callMode: CALL_MODE,
+            hasTwiml: !!callParams.twiml,
+            hasUrl: !!callParams.url,
           });
+          
+          const call = await twilioClient.client.calls.create(callParams);
 
           callSid = call.sid;
+          
+          // Structured logging after call
+          logTwilioCallAfter({
+            campaignId: campaignId,
+            leadId: contact.id,
+            callSid: call.sid,
+            callStatus: call.status || 'unknown',
+          });
+          
           console.log(`[TWILIO] Call SID: ${callSid}`);
 
           // Wait for call to complete (simplified - in production you'd use webhooks)
@@ -207,6 +365,14 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
           console.log(`[CALL END] Lead ${contact.id} - Phone: ${phoneNumber} - Result: ${callResult}`);
 
         } catch (twilioError: any) {
+          // Structured logging on error
+          logTwilioCallError({
+            campaignId: campaignId,
+            leadId: contact.id,
+            to: phoneNumber,
+            error: twilioError,
+          });
+          
           console.error(`[TWILIO ERROR] Call failed for lead ${contact.id}:`, twilioError.message);
           callResult = "FAILED";
           callSid = "error";

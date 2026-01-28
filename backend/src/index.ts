@@ -35,6 +35,7 @@ import { startDryRunBatch } from "./services/dryRunBatchCaller";
 import { startDryRunCallWorker } from "./services/dryRunCallWorker";
 import { startLiveCallWorker } from "./services/liveCallWorker";
 import { enqueueCsvJob } from "./services/csvImportWorker";
+import { DEFAULT_LIVE_TWIML } from "./twilioVoice";
 
 
 
@@ -79,6 +80,162 @@ function getTwilioClient() {
   return twilio(accountSid, authToken);
 }
 
+/**
+ * Validates that a Twilio call creation payload has either twiml or url.
+ * Throws an error if neither is provided (required for LIVE mode calls).
+ * Do NOT rely on phone-number voice configuration.
+ */
+function validateCallMediaInstructions(callParams: { twiml?: string; url?: string; [key: string]: any }): void {
+  if (!callParams.twiml && !callParams.url) {
+    throw new Error(
+      'Twilio call requires either "twiml" (inline TwiML) or "url" (TwiML endpoint). ' +
+      'Phone-number voice configuration is not allowed. Provide explicit media instructions.'
+    );
+  }
+  
+  // Validate that if url is provided, it's a valid URL
+  if (callParams.url && typeof callParams.url === 'string') {
+    try {
+      new URL(callParams.url);
+    } catch {
+      throw new Error(`Invalid TwiML URL provided: ${callParams.url}`);
+    }
+  }
+}
+
+function getTwilioVoiceUrlFromRequest(req: Request): string | null {
+  const host = req.get("host");
+  if (!host) return null;
+  const forwardedProto = req.get("x-forwarded-proto");
+  const protocol = (forwardedProto ? forwardedProto.split(",")[0].trim() : req.protocol) || "http";
+  return `${protocol}://${host}/twilio/voice`;
+}
+
+function ensureCallMediaInstructions(
+  callParams: { twiml?: string; url?: string; [key: string]: any },
+  fallbackUrl?: string | null
+): void {
+  if (!callParams.twiml && !callParams.url && fallbackUrl) {
+    callParams.url = fallbackUrl;
+  }
+  validateCallMediaInstructions(callParams);
+}
+
+function enforceProgrammableVoiceOnly(
+  callParams: { to?: string; sipTrunk?: string; sipDomain?: string; [key: string]: any }
+): void {
+  const sipEnabled = process.env.ENABLE_SIP_TRUNKING === "true";
+  if (CALL_MODE === "LIVE" && !sipEnabled) {
+    const toValue = typeof callParams.to === "string" ? callParams.to : "";
+    const looksLikeSip = toValue.toLowerCase().startsWith("sip:");
+    if (looksLikeSip || callParams.sipTrunk || callParams.sipDomain) {
+      throw new Error(
+        "SIP Trunking is disabled. Enable via ENABLE_SIP_TRUNKING=true to use SIP; " +
+          "otherwise only Programmable Voice with TwiML is allowed in LIVE mode."
+      );
+    }
+  }
+}
+
+function validateLiveBatchPrereqs(): { ok: true } | { ok: false; message: string; details: string[] } {
+  const missing: string[] = [];
+
+  if (!process.env.TWILIO_ACCOUNT_SID) missing.push("TWILIO_ACCOUNT_SID");
+  if (!process.env.TWILIO_AUTH_TOKEN) missing.push("TWILIO_AUTH_TOKEN");
+  if (!process.env.TWILIO_PHONE_NUMBER) missing.push("TWILIO_PHONE_NUMBER");
+
+  const hasInlineTwiml = typeof DEFAULT_LIVE_TWIML === "string" && DEFAULT_LIVE_TWIML.trim().length > 0;
+  const hasTwimlUrl = Boolean(process.env.PUBLIC_BASE_URL || process.env.BASE_URL);
+
+  if (!hasInlineTwiml && !hasTwimlUrl) {
+    missing.push("TwiML instructions (inline TwiML or PUBLIC_BASE_URL/BASE_URL)");
+  }
+
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      message: "LIVE mode validation failed. Missing required Twilio configuration.",
+      details: missing,
+    };
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Structured logging for Twilio outbound calls.
+ */
+function logTwilioCallBefore(params: {
+  campaignId?: string;
+  leadId?: string;
+  to: string;
+  callMode: string;
+  hasTwiml: boolean;
+  hasUrl: boolean;
+}): void {
+  const logData = {
+    event: 'TWILIO_CALL_BEFORE',
+    timestamp: new Date().toISOString(),
+    campaignId: params.campaignId || null,
+    leadId: params.leadId || null,
+    to: params.to,
+    callMode: params.callMode,
+    mediaType: params.hasTwiml ? 'twiml' : (params.hasUrl ? 'url' : 'NONE'),
+    hasMediaInstructions: params.hasTwiml || params.hasUrl,
+  };
+  
+  if (!logData.hasMediaInstructions) {
+    console.error('[TWILIO_CALL_BEFORE] ⚠️  WARNING: Call created WITHOUT TwiML/URL!', JSON.stringify(logData, null, 2));
+  } else {
+    console.log('[TWILIO_CALL_BEFORE]', JSON.stringify(logData, null, 2));
+  }
+}
+
+function logTwilioCallAfter(params: {
+  campaignId?: string;
+  leadId?: string;
+  callSid: string;
+  callStatus: string;
+}): void {
+  const logData = {
+    event: 'TWILIO_CALL_AFTER',
+    timestamp: new Date().toISOString(),
+    campaignId: params.campaignId || null,
+    leadId: params.leadId || null,
+    callSid: params.callSid,
+    callStatus: params.callStatus,
+  };
+  
+  console.log('[TWILIO_CALL_AFTER]', JSON.stringify(logData, null, 2));
+}
+
+function logTwilioCallError(params: {
+  campaignId?: string;
+  leadId?: string;
+  to?: string;
+  error: any;
+}): void {
+  const twilioError = params.error;
+  const logData = {
+    event: 'TWILIO_CALL_ERROR',
+    timestamp: new Date().toISOString(),
+    campaignId: params.campaignId || null,
+    leadId: params.leadId || null,
+    to: params.to || null,
+    error: {
+      message: twilioError?.message || String(twilioError),
+      code: twilioError?.code || null,
+      status: twilioError?.status || null,
+      moreInfo: twilioError?.moreInfo || null,
+      details: twilioError?.details || null,
+      // Include full error object for debugging
+      fullError: twilioError ? JSON.stringify(twilioError, Object.getOwnPropertyNames(twilioError)) : null,
+    },
+  };
+  
+  console.error('[TWILIO_CALL_ERROR]', JSON.stringify(logData, null, 2));
+}
+
 const app = express();
 const apiRoutes = express.Router();
 
@@ -114,6 +271,52 @@ app.get('/health', (_req: Request, res: Response) => {
     // Never throw - always return success even if something goes wrong
     res.status(200).json({ ok: true });
   }
+});
+app.get('/health/call', (_req: Request, res: Response) => {
+  const details: string[] = [];
+  const hasCallMode = Boolean(CALL_MODE);
+  const hasAccountSid = Boolean(process.env.TWILIO_ACCOUNT_SID);
+  const hasAuthToken = Boolean(process.env.TWILIO_AUTH_TOKEN);
+  const hasPhoneNumber = Boolean(process.env.TWILIO_PHONE_NUMBER);
+  const hasTestCallTo = Boolean(process.env.TEST_CALL_TO);
+
+  if (!hasCallMode) details.push("CALL_MODE is not set");
+  if (!hasAccountSid) details.push("TWILIO_ACCOUNT_SID is not set");
+  if (!hasAuthToken) details.push("TWILIO_AUTH_TOKEN is not set");
+  if (!hasPhoneNumber) details.push("TWILIO_PHONE_NUMBER is not set");
+  if (!hasTestCallTo) details.push("TEST_CALL_TO is not set");
+
+  let twilioClientOk = false;
+  let twilioClientError: string | null = null;
+  try {
+    getTwilioClient();
+    twilioClientOk = true;
+  } catch (err: any) {
+    twilioClientOk = false;
+    twilioClientError = String(err?.message || err);
+    details.push(`Twilio client init failed: ${twilioClientError}`);
+  }
+
+  const ok =
+    hasCallMode &&
+    hasAccountSid &&
+    hasAuthToken &&
+    hasPhoneNumber &&
+    hasTestCallTo &&
+    twilioClientOk;
+
+  res.status(ok ? 200 : 503).json({
+    ok,
+    callMode: CALL_MODE,
+    twilio: {
+      credentialsPresent: hasAccountSid && hasAuthToken,
+      phoneNumberPresent: hasPhoneNumber,
+      clientInitOk: twilioClientOk,
+      clientInitError: twilioClientError,
+    },
+    testCallToPresent: hasTestCallTo,
+    details,
+  });
 });
 
 // Configure multer for file uploads (memory storage for CSV)
@@ -178,7 +381,7 @@ app.get('/events', (req: Request, res: Response) => {
     res.end();
   });
 });
-app.get("/test-call", async (_req: Request, res: Response) => {
+app.get("/test-call", async (req: Request, res: Response) => {
   try {
     const to = process.env.TEST_CALL_TO;
     const from = process.env.TWILIO_PHONE_NUMBER;
@@ -192,28 +395,53 @@ app.get("/test-call", async (_req: Request, res: Response) => {
     }
 
     const twilioClient = getTwilioClient();
-    const call = await twilioClient.calls.create({
+    const callParams = {
       to,
       from,
-      // Twilio will fetch this URL which returns TwiML that speaks a message
-      url: "https://demo.twilio.com/docs/voice.xml",
+      // Use inline TwiML with Say verb (no ElevenLabs, no SIP)
+      twiml: '<Response><Say>Hello, this is a test call from your real estate AI bot. This is a temporary test endpoint for manual verification.</Say></Response>',
+    };
+    
+    // Validate media instructions before creating call
+    const fallbackUrl = getTwilioVoiceUrlFromRequest(req);
+    ensureCallMediaInstructions(callParams, fallbackUrl);
+    enforceProgrammableVoiceOnly(callParams);
+    
+    // Structured logging before call
+    logTwilioCallBefore({
+      to,
+      callMode: CALL_MODE,
+      hasTwiml: !!callParams.twiml,
+      hasUrl: !!callParams.url,
     });
-
-    console.log("Started test call, SID:", call.sid);
-
-    res.json({
-      ok: true,
-      message: "Test call started. Your phone should ring shortly.",
-      callSid: call.sid,
-    });
-  } catch (err: any) {
-    console.error("Twilio test call error:", err?.message || err);
-    res.status(500).json({
-      ok: false,
-      error: "Failed to start test call",
-      details: String(err?.message || err),
-    });
-  }
+    
+    let call;
+    try {
+      call = await twilioClient.calls.create(callParams);
+      
+      // Structured logging after call
+      logTwilioCallAfter({
+        callSid: call.sid,
+        callStatus: call.status || 'unknown',
+      });
+      
+      res.json({
+        callSid: call.sid,
+      });
+    } catch (err: any) {
+      // Structured logging on error
+      logTwilioCallError({
+        to,
+        error: err,
+      });
+      
+      console.error("Twilio test call error:", err?.message || err);
+      res.status(500).json({
+        ok: false,
+        error: "Failed to start test call",
+        details: String(err?.message || err),
+      });
+    }
 });
 
 
@@ -472,11 +700,50 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
     }
 
     const twilioClient = getTwilioClient();
-    const call = await twilioClient.calls.create({
+    const callParams = {
       to,
       from,
       url: "https://329e26f3bac8.ngrok-free.app", // placeholder voice
+    };
+    
+    // Validate media instructions before creating call (required for LIVE mode)
+    const fallbackUrl = getTwilioVoiceUrlFromRequest(req);
+    ensureCallMediaInstructions(callParams, fallbackUrl);
+    enforceProgrammableVoiceOnly(callParams);
+    
+    // Structured logging before call
+    logTwilioCallBefore({
+      campaignId: campaignContact.campaignId,
+      leadId: campaignContact.id,
+      to,
+      callMode: CALL_MODE,
+      hasTwiml: !!callParams.twiml,
+      hasUrl: !!callParams.url,
     });
+    
+    let call;
+    try {
+      call = await twilioClient.calls.create(callParams);
+      
+      // Structured logging after call
+      logTwilioCallAfter({
+        campaignId: campaignContact.campaignId,
+        leadId: campaignContact.id,
+        callSid: call.sid,
+        callStatus: call.status || 'unknown',
+      });
+    } catch (err: any) {
+      // Structured logging on error
+      logTwilioCallError({
+        campaignId: campaignContact.campaignId,
+        leadId: campaignContact.id,
+        to,
+        error: err,
+      });
+      
+      // Re-throw to be handled by outer catch
+      throw err;
+    }
 
     // STEP 21: Create call log with auto-applied strategy if available (safe try/catch for backward compatibility)
     let callLog;
@@ -616,6 +883,13 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
       details: String(err?.message || err),
     });
   }
+});
+app.get("/twilio/voice", (_req: Request, res: Response) => {
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">Hello. This is a live test call from CallBot.</Say>
+</Response>`;
+  res.status(200).type("text/xml").send(twiml);
 });
 app.post("/twilio/status", async (req: Request, res: Response) => {
   try {
@@ -2710,6 +2984,17 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
       });
     }
 
+    if (CALL_MODE === "LIVE") {
+      const validation = validateLiveBatchPrereqs();
+      if (!validation.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: validation.message,
+          details: validation.details,
+        });
+      }
+    }
+
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { batchActive: true, batchState: BatchState.RUNNING },
@@ -2879,6 +3164,17 @@ apiRoutes.post("/campaigns/:campaignId/resume-batch", async (req: Request, res: 
       });
     }
 
+    if (CALL_MODE === "LIVE") {
+      const validation = validateLiveBatchPrereqs();
+      if (!validation.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: validation.message,
+          details: validation.details,
+        });
+      }
+    }
+
     // Reset any IN_PROGRESS leads back to PENDING for resume (safety: avoid duplicates)
     const resetCount = await prisma.campaignContact.updateMany({
       where: {
@@ -2959,6 +3255,17 @@ apiRoutes.post("/campaigns/:id/batch/resume", async (req: Request, res: Response
         error: "Cannot resume batch outside call window",
         batchState: campaign.batchState
       });
+    }
+
+    if (CALL_MODE === "LIVE") {
+      const validation = validateLiveBatchPrereqs();
+      if (!validation.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: validation.message,
+          details: validation.details,
+        });
+      }
     }
 
     // Reset any IN_PROGRESS leads back to PENDING for resume (safety: avoid duplicates)
@@ -3076,6 +3383,17 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
         ok: false,
         error: "Cannot resume batch outside call window",
       });
+    }
+
+    if (CALL_MODE === "LIVE") {
+      const validation = validateLiveBatchPrereqs();
+      if (!validation.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: validation.message,
+          details: validation.details,
+        });
+      }
     }
 
     // Reset any IN_PROGRESS leads back to PENDING for resume (safety: avoid duplicates)
