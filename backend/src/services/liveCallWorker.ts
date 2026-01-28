@@ -92,6 +92,14 @@ function enforceProgrammableVoiceOnly(
   }
 }
 
+type TwilioCallParams = {
+  to: string;
+  from: string;
+  twiml?: string;
+  url?: string;
+  [key: string]: any;
+};
+
 /**
  * Structured logging for Twilio outbound calls.
  */
@@ -310,7 +318,7 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
         let callDuration = 0;
 
         try {
-          const callParams = {
+          const callParams: TwilioCallParams = {
             to: phoneNumber,
             from: twilioClient.fromNumber,
             twiml: DEFAULT_LIVE_TWIML,

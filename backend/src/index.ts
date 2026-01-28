@@ -137,7 +137,19 @@ function enforceProgrammableVoiceOnly(
   }
 }
 
-function validateLiveBatchPrereqs(): { ok: true } | { ok: false; message: string; details: string[] } {
+type LiveBatchValidationResult =
+  | { ok: true }
+  | { ok: false; message: string; details: string[] };
+
+type TwilioCallParams = {
+  to: string;
+  from: string;
+  twiml?: string;
+  url?: string;
+  [key: string]: any;
+};
+
+function validateLiveBatchPrereqs(): LiveBatchValidationResult {
   const missing: string[] = [];
 
   if (!process.env.TWILIO_ACCOUNT_SID) missing.push("TWILIO_ACCOUNT_SID");
@@ -395,7 +407,7 @@ app.get("/test-call", async (req: Request, res: Response) => {
     }
 
     const twilioClient = getTwilioClient();
-    const callParams = {
+    const callParams: TwilioCallParams = {
       to,
       from,
       // Use inline TwiML with Say verb (no ElevenLabs, no SIP)
@@ -708,7 +720,7 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
     }
 
     const twilioClient = getTwilioClient();
-    const callParams = {
+    const callParams: TwilioCallParams = {
       to,
       from,
       url: "https://329e26f3bac8.ngrok-free.app", // placeholder voice
@@ -2994,11 +3006,12 @@ apiRoutes.post("/campaigns/:campaignId/start-batch", async (req: Request, res: R
 
     if (CALL_MODE === "LIVE") {
       const validation = validateLiveBatchPrereqs();
-      if (!validation.ok) {
+      if (validation.ok === false) {
+        const { message, details } = validation;
         return res.status(400).json({
           ok: false,
-          error: validation.message,
-          details: validation.details,
+          error: message,
+          details,
         });
       }
     }
@@ -3174,11 +3187,12 @@ apiRoutes.post("/campaigns/:campaignId/resume-batch", async (req: Request, res: 
 
     if (CALL_MODE === "LIVE") {
       const validation = validateLiveBatchPrereqs();
-      if (!validation.ok) {
+      if (validation.ok === false) {
+        const { message, details } = validation;
         return res.status(400).json({
           ok: false,
-          error: validation.message,
-          details: validation.details,
+          error: message,
+          details,
         });
       }
     }
@@ -3267,11 +3281,12 @@ apiRoutes.post("/campaigns/:id/batch/resume", async (req: Request, res: Response
 
     if (CALL_MODE === "LIVE") {
       const validation = validateLiveBatchPrereqs();
-      if (!validation.ok) {
+      if (validation.ok === false) {
+        const { message, details } = validation;
         return res.status(400).json({
           ok: false,
-          error: validation.message,
-          details: validation.details,
+          error: message,
+          details,
         });
       }
     }
@@ -3395,11 +3410,12 @@ apiRoutes.post("/campaigns/:campaignId/resume", async (req: Request, res: Respon
 
     if (CALL_MODE === "LIVE") {
       const validation = validateLiveBatchPrereqs();
-      if (!validation.ok) {
+      if (validation.ok === false) {
+        const { message, details } = validation;
         return res.status(400).json({
           ok: false,
-          error: validation.message,
-          details: validation.details,
+          error: message,
+          details,
         });
       }
     }
