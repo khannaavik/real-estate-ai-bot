@@ -11,6 +11,7 @@ function sleep(ms: number): Promise<void> {
 // Rate limiting configuration from environment variables
 const MAX_CONCURRENT_CALLS = parseInt(process.env.MAX_CONCURRENT_CALLS || "1", 10);
 const CALL_DELAY_MS = parseInt(process.env.CALL_DELAY_MS || "45000", 10);
+const CALL_RATE_LIMIT_SECONDS = parseInt(process.env.CALL_RATE_LIMIT_SECONDS || "0", 10);
 const CALL_MODE = (process.env.CALL_MODE || "DRY_RUN").toUpperCase();
 
 // Prevent parallel batches per campaign
@@ -303,8 +304,7 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
         }
 
         const phoneNumber = contact.contact?.phone || "unknown";
-        console.log(`[CALL START] Lead ${contact.id} - Phone: ${phoneNumber}`);
-        console.log(`[TWILIO] Initiating call`);
+        console.log("[CALL_START]", `${contact.id} ${phoneNumber}`);
 
         // Make REAL Twilio call
         let callSid: string;
@@ -318,8 +318,7 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
             leadId: contact.id,
           });
           callSid = call.sid;
-          
-          console.log(`[TWILIO] Call SID: ${callSid}`);
+          console.log("[CALL_CREATED]", callSid);
 
           // Wait for call to complete (simplified - in production you'd use webhooks)
           // For now, we'll mark it as completed after a short delay
@@ -338,7 +337,7 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
             callResult = "FAILED";
           }
 
-          console.log(`[CALL END] Lead ${contact.id} - Phone: ${phoneNumber} - Result: ${callResult}`);
+          console.log("[CALL_END]");
 
         } catch (twilioError: any) {
           // Structured logging on error
@@ -385,9 +384,11 @@ export async function startLiveCallWorker(campaignId: string): Promise<void> {
         });
 
         // Rate limiting: Add delay after each call ends (before next call starts)
-        if (CALL_DELAY_MS > 0) {
-          console.log(`[RATE LIMIT] Waiting ${CALL_DELAY_MS / 1000}s before next call`);
-          await sleep(CALL_DELAY_MS);
+        const rateLimitMs =
+          CALL_RATE_LIMIT_SECONDS > 0 ? CALL_RATE_LIMIT_SECONDS * 1000 : CALL_DELAY_MS;
+        if (rateLimitMs > 0) {
+          console.log(`[RATE LIMIT] Waiting ${rateLimitMs / 1000}s before next call`);
+          await sleep(rateLimitMs);
         }
       } catch (err) {
         console.error(`[LIVE] Contact processing failed (${contact.id})`, err);

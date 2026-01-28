@@ -5,7 +5,7 @@ import OpenAI from 'openai';
  
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
-import { BatchCallStatus, BatchState, CallLifecycleStatus, CallStatus } from "@prisma/client";
+import { BatchCallStatus, BatchState, CallLifecycleStatus, CallStatus, PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma";
 import { pinAuthMiddleware } from './middleware/pinAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
@@ -232,6 +232,9 @@ function logTwilioCallError(params: {
 
 const app = express();
 const apiRoutes = express.Router();
+
+// Direct Prisma client for batch status queries (bypass Accelerate)
+const directPrisma = new PrismaClient();
 
 // Server start time for uptime calculation (zero-dependency)
 const serverStartTime = Date.now();
@@ -666,21 +669,10 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
     const finalVoiceTone = autoAppliedStrategy?.voiceTone || adaptiveStrategy.voiceTone;
 
     const to = campaignContact.contact.phone;
-    console.log("[FRONTEND_CALL_DEBUG]", {
+    const call = await createLiveCall({
       to,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      usingInlineTwiml: true,
-    });
-    const call = await getTwilioClient().calls.create({
-      to,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      twiml: `
-    <Response>
-      <Say voice="alice">
-        This is a live frontend call test.
-      </Say>
-    </Response>
-  `,
+      campaignId: campaignContact.campaignId,
+      leadId: campaignContact.id,
     });
     const callSid = call.sid;
 
@@ -3431,10 +3423,16 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
       });
     }
 
-    const campaign = await prisma.campaign.findUnique({
-      where: { id: campaignId },
-      select: { id: true, batchActive: true, batchState: true },
-    });
+    let campaign: { id: string; batchActive: boolean; batchState: BatchState } | null = null;
+    try {
+      campaign = await directPrisma.campaign.findUnique({
+        where: { id: campaignId },
+        select: { id: true, batchActive: true, batchState: true },
+      });
+    } catch (err) {
+      console.error("[BATCH STATUS SAFE ERROR]", err);
+      campaign = null;
+    }
 
     if (!campaign) {
       return res.json({
@@ -3446,18 +3444,21 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
       });
     }
 
-    const pending = await prisma.campaignContact.count({
-      where: { campaignId, callStatus: CallStatus.PENDING },
-    });
-    const inProgress = await prisma.campaignContact.count({
-      where: { campaignId, callStatus: CallStatus.IN_PROGRESS },
-    });
-    const completed = await prisma.campaignContact.count({
-      where: { campaignId, callStatus: CallStatus.COMPLETED },
-    });
-    const failed = await prisma.campaignContact.count({
-      where: { campaignId, callStatus: CallStatus.FAILED },
-    });
+    const safeCount = async (status: CallStatus) => {
+      try {
+        return await directPrisma.campaignContact.count({
+          where: { campaignId, callStatus: status },
+        });
+      } catch (err) {
+        console.error("[BATCH STATUS SAFE ERROR]", err);
+        return 0;
+      }
+    };
+
+    const pending = await safeCount(CallStatus.PENDING);
+    const inProgress = await safeCount(CallStatus.IN_PROGRESS);
+    const completed = await safeCount(CallStatus.COMPLETED);
+    const failed = await safeCount(CallStatus.FAILED);
 
     res.json({
       pending,
