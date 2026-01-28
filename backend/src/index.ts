@@ -666,17 +666,21 @@ app.get("/call/start/:campaignContactId", async (req: Request, res: Response) =>
     const finalVoiceTone = autoAppliedStrategy?.voiceTone || adaptiveStrategy.voiceTone;
 
     const to = campaignContact.contact.phone;
-    console.log("[FRONTEND_CALL_ENTRY]", {
+    console.log("[FRONTEND_CALL_DEBUG]", {
       to,
-      campaignId: campaignContact.campaignId,
-      leadId: campaignContact.id,
-      callMode: CALL_MODE,
-      twimlSource: "inline",
+      from: process.env.TWILIO_PHONE_NUMBER,
+      usingInlineTwiml: true,
     });
-    const call = await createLiveCall({
+    const call = await getTwilioClient().calls.create({
       to,
-      campaignId: campaignContact.campaignId,
-      leadId: campaignContact.id,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      twiml: `
+    <Response>
+      <Say voice="alice">
+        This is a live frontend call test.
+      </Say>
+    </Response>
+  `,
     });
     const callSid = call.sid;
 
