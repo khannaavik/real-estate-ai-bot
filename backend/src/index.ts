@@ -234,7 +234,19 @@ const app = express();
 const apiRoutes = express.Router();
 
 // Direct Prisma client for batch status queries (bypass Accelerate)
-const directPrisma = new PrismaClient();
+const directPrisma = (() => {
+  try {
+    if (!process.env.DATABASE_URL) {
+      throw new Error("DATABASE_URL is not set");
+    }
+    return new PrismaClient({
+      datasources: { db: { url: process.env.DATABASE_URL } },
+    } as any);
+  } catch (err) {
+    console.error("[BATCH STATUS SAFE ERROR] Direct Prisma init failed:", err);
+    return null;
+  }
+})();
 
 // Server start time for uptime calculation (zero-dependency)
 const serverStartTime = Date.now();
@@ -3425,6 +3437,9 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
 
     let campaign: { id: string; batchActive: boolean; batchState: BatchState } | null = null;
     try {
+      if (!directPrisma) {
+        throw new Error("Direct Prisma client unavailable");
+      }
       campaign = await directPrisma.campaign.findUnique({
         where: { id: campaignId },
         select: { id: true, batchActive: true, batchState: true },
@@ -3446,6 +3461,9 @@ apiRoutes.get("/campaigns/:campaignId/batch-status", async (req: Request, res: R
 
     const safeCount = async (status: CallStatus) => {
       try {
+        if (!directPrisma) {
+          throw new Error("Direct Prisma client unavailable");
+        }
         return await directPrisma.campaignContact.count({
           where: { campaignId, callStatus: status },
         });
