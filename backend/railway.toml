@@ -1,0 +1,6 @@
+[build]
+builder = "nixpacks"
+buildDirectory = "backend"
+
+[deploy]
+startCommand = "npm run start"
