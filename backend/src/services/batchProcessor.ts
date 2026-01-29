@@ -1,4 +1,4 @@
-import { prisma } from "../prisma";
+import prisma from "../prisma";
 import { CallLifecycleStatus, CallStatus } from "@prisma/client";
 import { analyzeCallOutcome, type CallStatus as AICallStatus } from "./aiCallAnalysis";
 

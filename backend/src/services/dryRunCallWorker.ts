@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { prisma } from "../prisma";
+import prisma from "../prisma";
 import { isWithinCallWindow } from "../timeWindow";
 import { BatchState } from "@prisma/client";
 

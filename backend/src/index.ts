@@ -6,7 +6,7 @@ import OpenAI from 'openai';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { BatchCallStatus, BatchState, CallLifecycleStatus, CallStatus } from "@prisma/client";
-import { prisma } from "./prisma";
+import prisma from "./prisma";
 import { pinAuthMiddleware } from './middleware/pinAuth';
 // Local type definition for LeadStatus (Prisma enum may not be exported in all environments)
 type LeadStatus = "COLD" | "WARM" | "HOT" | "NOT_PICK";

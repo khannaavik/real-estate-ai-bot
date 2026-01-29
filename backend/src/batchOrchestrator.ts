@@ -1,4 +1,4 @@
-import { prisma } from "./prisma";
+import prisma from "./prisma";
 
 /**
  * Get retry metadata from CampaignContact.

@@ -1,5 +1,5 @@
 import { parse } from "csv-parse/sync";
-import { prisma } from "../prisma";
+import prisma from "../prisma";
 
 type CsvCounters = {
   pending: number;

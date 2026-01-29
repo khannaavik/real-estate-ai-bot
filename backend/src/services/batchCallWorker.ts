@@ -1,4 +1,4 @@
-import { prisma } from "../prisma";
+import prisma from "../prisma";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

@@ -1,5 +1,5 @@
 import { getTwilioClient as getGuardedTwilioClient, createLiveCall } from "../createLiveCall";
-import { prisma } from "../prisma";
+import prisma from "../prisma";
 import { isWithinCallWindow } from "../timeWindow";
 import { DEFAULT_LIVE_TWIML } from "../twilioVoice";
 import { BatchState } from "@prisma/client";

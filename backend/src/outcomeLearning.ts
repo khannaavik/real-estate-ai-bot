@@ -1,7 +1,7 @@
 // backend/src/outcomeLearning.ts
 // Deterministic learning system for call outcome patterns
 
-import { prisma } from "./prisma";
+import prisma from "./prisma";
 import { eventBus, type SSEEvent } from "./eventBus";
 
 /**

@@ -1,7 +1,7 @@
 // scripts/createTestLead.ts
 // Create a test lead eligible for batch calling
 
-import { prisma } from '../src/prisma';
+import prisma from '../src/prisma';
 
 async function createTestLead() {
   try {
